@@ -13,8 +13,8 @@ export function getAnthropicClient(): Anthropic {
   return client;
 }
 
-export const AI_MODEL_FAST = process.env.AI_MODEL || 'claude-sonnet-4-5-20241022';
-export const AI_MODEL_SMART = process.env.AI_MODEL_FALLBACK || 'claude-sonnet-4-5-20241022';
+export const AI_MODEL_FAST = process.env.AI_MODEL || 'claude-sonnet-4-6';
+export const AI_MODEL_SMART = process.env.AI_MODEL_FALLBACK || 'claude-sonnet-4-6';
 
 export async function chat(
   systemPrompt: string,
