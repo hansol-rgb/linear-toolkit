@@ -214,6 +214,16 @@ export async function routeEvent(
   if (event.type === "message" && event.channel_type === "im" && !event.subtype) {
     await handleDMMessage(event as SlackMessageEvent);
   }
+
+  if (event.type === "reaction_added") {
+    const { handleReactionAdded } = await import("./reactions");
+    const raw = event as unknown as { user: string; reaction: string; item: { type: string; channel: string; ts: string } };
+    await handleReactionAdded({
+      user: raw.user,
+      reaction: raw.reaction,
+      item: raw.item,
+    });
+  }
 }
 
 export function parseEventPayload(body: string): SlackEventPayload {
