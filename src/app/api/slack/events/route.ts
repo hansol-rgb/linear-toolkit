@@ -1,31 +1,40 @@
 import { NextResponse, after } from "next/server";
 import {
+  verifyRequestSignature,
   handleUrlVerification,
   routeEvent,
   parseEventPayload,
 } from "@/lib/slack/events";
 import type { SlackEventCallback, SlackUrlVerificationEvent } from "@/lib/slack/types";
 
-// GET handler to verify this route is alive
-export async function GET(): Promise<NextResponse> {
-  return NextResponse.json({ route: "slack/events", status: "ok" });
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const body = await request.text();
-  console.log("SLACK EVENT RECEIVED:", body.substring(0, 200));
   const payload = parseEventPayload(body);
 
-  // URL verification challenge
+  // URL verification — respond immediately without signature check
   if (payload.type === "url_verification") {
     const result = handleUrlVerification(payload as SlackUrlVerificationEvent);
     return NextResponse.json(result);
   }
 
-  // Event callback — use after() to keep function alive after responding
+  // Verify signature for all other requests
+  const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
+  const signature = request.headers.get("x-slack-signature") ?? "";
+  const signingSecret = process.env.SLACK_SIGNING_SECRET;
+
+  if (!signingSecret) {
+    console.error("SLACK_SIGNING_SECRET not configured");
+    return NextResponse.json({ error: "Server misconfiguration" }, { status: 500 });
+  }
+
+  if (!verifyRequestSignature(signingSecret, signature, timestamp, body)) {
+    console.error("Invalid Slack signature");
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
+  // Event callback
   if (payload.type === "event_callback") {
     const eventPayload = payload as SlackEventCallback;
-
     after(async () => {
       try {
         await routeEvent(eventPayload);
@@ -34,7 +43,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         console.error("Error routing Slack event:", err);
       }
     });
-
     return NextResponse.json({ ok: true });
   }
 

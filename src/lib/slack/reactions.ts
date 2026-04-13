@@ -1,6 +1,6 @@
 import { getSlackClient } from "./client";
 import { replyInThread } from "./channel";
-import { chat, AI_MODEL_SMART } from "@/lib/ai/client";
+import { chatStructured, AI_MODEL_SMART } from "@/lib/ai/client";
 import { createIssue } from "@/lib/linear/issues";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
@@ -14,6 +14,21 @@ const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
   "bug": { type: "버그", priority: 2 },
   "zap": { type: "긴급", priority: 1 },
   "pushpin": { type: "이슈", priority: 3 },
+};
+
+const REACTION_ISSUE_SCHEMA = {
+  name: 'create_issue_from_message',
+  description: 'Create a Linear issue from a Slack message',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string', description: '구체적이고 액션 가능한 이슈 제목' },
+      description: { type: 'string', description: '마크다운 형식의 상세 설명' },
+      labels: { type: 'array', items: { type: 'string' } },
+      priority: { type: 'number', enum: [1, 2, 3, 4] },
+    },
+    required: ['title', 'description', 'priority'],
+  },
 };
 
 async function getMessageContext(
@@ -103,8 +118,14 @@ export async function handleReactionAdded(event: {
   if (!team) return;
 
   // AI extracts structured issue from the message — use SMART model for quality
-  const aiResult = await chat(
-    `슬랙 메시지를 Linear 이슈로 변환하세요.
+  const parsed = await chatStructured<{
+    title: string;
+    description: string;
+    labels?: string[];
+    priority?: number;
+  }>(
+    `오늘 날짜: ${new Date().toISOString().slice(0, 10)}
+슬랙 메시지를 Linear 이슈로 변환하세요.
 이슈 유형: ${action.type}
 
 ## 규칙
@@ -125,21 +146,11 @@ export async function handleReactionAdded(event: {
 (이슈를 닫을 수 있는 조건)
 
 ## 참고
-(URL, 관련 정보 등)
-
-마크다운 코드펜스 없이 순수 JSON만 응답하세요:
-{"title": "구체적 제목", "description": "마크다운 설명", "labels": ["feature"], "priority": ${action.priority}}`,
+(URL, 관련 정보 등)`,
     [{ role: "user", content: messageText }],
+    REACTION_ISSUE_SCHEMA,
     AI_MODEL_SMART,
   );
-
-  const cleaned = aiResult.replace(/^```(?:json)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
-  const parsed = JSON.parse(cleaned) as {
-    title: string;
-    description: string;
-    labels?: string[];
-    priority?: number;
-  };
 
   // Ensure labels exist
   const labelIds = parsed.labels?.length
