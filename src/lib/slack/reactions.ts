@@ -1,19 +1,63 @@
 import { getSlackClient } from "./client";
 import { replyInThread } from "./channel";
-import { chat } from "@/lib/ai/client";
+import { chat, AI_MODEL_SMART } from "@/lib/ai/client";
 import { createIssue } from "@/lib/linear/issues";
 import { getTeams } from "@/lib/linear/teams";
+import { ensureLabels } from "@/lib/linear/labels";
 
 // Emoji → action mapping
 const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
-  "task": { type: "이슈", priority: 3 },               // :task: 커스텀 이모지
-  "emoji-task": { type: "이슈", priority: 3 },          // :emoji-task: 커스텀 이모지
-  "clipboard": { type: "이슈", priority: 3 },          // 📋
-  "memo": { type: "이슈", priority: 3 },               // 📝
-  "bug": { type: "버그", priority: 2 },                // 🐛
-  "zap": { type: "긴급", priority: 1 },                // ⚡
-  "pushpin": { type: "이슈", priority: 3 },            // 📌
+  "task": { type: "이슈", priority: 3 },
+  "emoji-task": { type: "이슈", priority: 3 },
+  "clipboard": { type: "이슈", priority: 3 },
+  "memo": { type: "이슈", priority: 3 },
+  "bug": { type: "버그", priority: 2 },
+  "zap": { type: "긴급", priority: 1 },
+  "pushpin": { type: "이슈", priority: 3 },
 };
+
+async function getMessageContext(
+  channel: string,
+  ts: string,
+): Promise<string | null> {
+  const client = getSlackClient();
+
+  // First try: fetch as a thread reply (conversations.replies)
+  try {
+    const replies = await client.conversations.replies({
+      channel,
+      ts,
+      inclusive: true,
+      limit: 20,
+    });
+    if (replies.messages && replies.messages.length > 0) {
+      // Collect all messages in the thread for full context
+      const allText = replies.messages
+        .filter((m) => m.text)
+        .map((m) => m.text)
+        .join("\n\n");
+      if (allText.trim()) return allText;
+    }
+  } catch {
+    // Not a thread, fall through
+  }
+
+  // Fallback: fetch single message from channel history
+  try {
+    const result = await client.conversations.history({
+      channel,
+      latest: ts,
+      inclusive: true,
+      limit: 1,
+    });
+    const message = result.messages?.[0];
+    if (message?.text) return message.text;
+  } catch {
+    // No access
+  }
+
+  return null;
+}
 
 export async function handleReactionAdded(event: {
   user: string;
@@ -29,50 +73,86 @@ export async function handleReactionAdded(event: {
 
   const client = getSlackClient();
 
-  // Fetch the original message
-  const result = await client.conversations.history({
-    channel: event.item.channel,
-    latest: event.item.ts,
-    inclusive: true,
-    limit: 1,
-  });
+  // Get the full message context (including thread if applicable)
+  const messageText = await getMessageContext(event.item.channel, event.item.ts);
+  if (!messageText) {
+    console.log("Could not fetch message text");
+    return;
+  }
 
-  const message = result.messages?.[0];
-  if (!message || !message.text) return;
+  console.log("Message text for issue:", messageText.substring(0, 200));
 
-  // Check if we already created an issue for this message (look for bot reply in thread)
-  const threadReplies = await client.conversations.replies({
-    channel: event.item.channel,
-    ts: event.item.ts,
-    limit: 10,
-  });
-  const alreadyProcessed = threadReplies.messages?.some(
-    (m) => m.bot_id && m.text?.includes("Linear에 등록")
-  );
-  if (alreadyProcessed) return;
+  // Check if we already created an issue for this message
+  try {
+    const threadReplies = await client.conversations.replies({
+      channel: event.item.channel,
+      ts: event.item.ts,
+      limit: 10,
+    });
+    const alreadyProcessed = threadReplies.messages?.some(
+      (m) => m.bot_id && m.text?.includes("Linear에 등록")
+    );
+    if (alreadyProcessed) return;
+  } catch {
+    // Ignore errors checking for duplicates
+  }
 
   // Get default team
   const teams = await getTeams();
   const team = teams[0];
   if (!team) return;
 
-  // AI extracts issue title and description from the message
+  // AI extracts structured issue from the message — use SMART model for quality
   const aiResult = await chat(
-    `슬랙 메시지를 Linear 이슈로 변환하세요. 이슈 유형: ${action.type}
-반드시 아래 JSON 형식으로만 응답하세요. 마크다운 코드펜스 없이 순수 JSON만:
-{"title": "간결한 이슈 제목", "description": "상세 설명"}`,
-    [{ role: "user", content: message.text }],
+    `슬랙 메시지를 Linear 이슈로 변환하세요.
+이슈 유형: ${action.type}
+
+## 규칙
+- 메시지의 **실제 내용**을 정확히 반영하세요. 내용을 변형하거나 추측하지 마세요.
+- 제목은 구체적이고 액션 가능하게 작성하세요.
+- 설명은 아래 구조를 반드시 따르세요.
+- 메시지에 URL이 있으면 설명에 포함하세요.
+- 여러 사람의 대화라면 핵심 내용을 종합하세요.
+
+## 설명 구조
+## 배경
+(이 작업이 필요한 맥락)
+
+## 할 일
+- [ ] 구체적인 액션 아이템
+
+## 완료 조건
+(이슈를 닫을 수 있는 조건)
+
+## 참고
+(URL, 관련 정보 등)
+
+마크다운 코드펜스 없이 순수 JSON만 응답하세요:
+{"title": "구체적 제목", "description": "마크다운 설명", "labels": ["feature"], "priority": ${action.priority}}`,
+    [{ role: "user", content: messageText }],
+    AI_MODEL_SMART,
   );
 
   const cleaned = aiResult.replace(/^```(?:json)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
-  const { title, description } = JSON.parse(cleaned) as { title: string; description: string };
+  const parsed = JSON.parse(cleaned) as {
+    title: string;
+    description: string;
+    labels?: string[];
+    priority?: number;
+  };
+
+  // Ensure labels exist
+  const labelIds = parsed.labels?.length
+    ? await ensureLabels(team.id, parsed.labels)
+    : undefined;
 
   // Create Linear issue
   const created = await createIssue({
-    title,
-    description: `${description}\n\n---\n_슬랙 메시지에서 자동 생성됨_`,
+    title: parsed.title,
+    description: `${parsed.description}\n\n---\n_슬랙 메시지에서 :${event.reaction}: 이모지로 자동 생성됨_`,
     teamId: team.id,
-    priority: action.priority,
+    priority: parsed.priority ?? action.priority,
+    labelIds,
   });
   const identifier = await created.identifier;
 
@@ -80,6 +160,6 @@ export async function handleReactionAdded(event: {
   await replyInThread(
     event.item.channel,
     event.item.ts,
-    `Linear에 등록했어요: *${identifier}* — ${title}`,
+    `Linear에 등록했어요: *${identifier}* — ${parsed.title}`,
   );
 }
