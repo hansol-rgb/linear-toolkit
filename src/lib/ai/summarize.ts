@@ -35,6 +35,7 @@ export async function summarizeForChannel(
     AI_MODEL_FAST,
   );
 
-  const parsed = JSON.parse(result) as TeamMemberSummary[];
+  const cleaned = result.replace(/^```(?:json)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
+  const parsed = JSON.parse(cleaned) as TeamMemberSummary[];
   return parsed;
 }

@@ -31,7 +31,9 @@ export async function extractIssues(
     AI_MODEL_SMART,
   );
 
-  const parsed = JSON.parse(result) as ExtractedIssue[];
+  // Strip markdown code fences if present
+  const cleaned = result.replace(/^```(?:json)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
+  const parsed = JSON.parse(cleaned) as ExtractedIssue[];
 
   return parsed.map((issue) => ({
     ...issue,
