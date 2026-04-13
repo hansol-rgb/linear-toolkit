@@ -121,75 +121,81 @@ export async function handleDMMessage(
   // Ignore bot messages
   if (event.subtype === "bot_message") return;
 
-  let conversation = getConversation(userId);
+  try {
+    let conversation = getConversation(userId);
 
-  // No active conversation — start an ad-hoc one
-  if (!conversation) {
-    conversation = {
-      userId,
-      slackChannelId: event.channel,
-      status: "awaiting_response",
-      messages: [],
-      followUpCount: 0,
-      createdAt: now,
-      expiresAt: now + config.app.conversationTimeoutMs,
-    };
-  }
+    // No active conversation — start an ad-hoc one
+    if (!conversation) {
+      conversation = {
+        userId,
+        slackChannelId: event.channel,
+        status: "awaiting_response",
+        messages: [],
+        followUpCount: 0,
+        createdAt: now,
+        expiresAt: now + config.app.conversationTimeoutMs,
+      };
+    }
 
-  // Add user message
-  conversation.messages.push({ role: "user", content: text, timestamp: now });
+    // Add user message
+    conversation.messages.push({ role: "user", content: text, timestamp: now });
 
-  // Check if conversation should end
-  const shouldEnd = await shouldEndConversation(conversation.messages);
+    // Check if conversation should end
+    const shouldEnd = await shouldEndConversation(conversation.messages);
 
-  if (shouldEnd || conversation.followUpCount >= 2) {
-    conversation.status = "completed";
+    if (shouldEnd || conversation.followUpCount >= 2) {
+      conversation.status = "completed";
+      setConversation(userId, conversation);
+
+      // Extract issues and create in Linear
+      const issueLinks = await processConversationEnd(conversation);
+
+      // Send closing message via DM
+      let closingMessage = "감사합니다! 좋은 하루 보내세요.";
+      if (issueLinks.length > 0) {
+        closingMessage += `\n\nLinear에 등록된 이슈: ${issueLinks.join(", ")}`;
+      }
+      await sendDM(userId, closingMessage);
+
+      // Post to daily scrum channel thread immediately
+      const threadTs = getDailyThread();
+      if (threadTs) {
+        const items = conversation.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.content);
+        const summary = items.join("\n");
+        const issueText = issueLinks.length > 0
+          ? `\nLinear: ${issueLinks.join(", ")}`
+          : "";
+        await replyInThread(
+          config.slack.scrumChannelId,
+          threadTs,
+          `*<@${userId}>*\n${summary}${issueText}`
+        );
+      }
+
+      deleteConversation(userId);
+      return;
+    }
+
+    // Generate AI follow-up response
+    conversation.status = "follow_up";
+    conversation.followUpCount++;
+
+    const aiResponse = await generateInterviewResponse(
+      conversation.messages,
+      conversation.followUpCount
+    );
+
+    conversation.messages.push({ role: "assistant", content: aiResponse, timestamp: Date.now() });
     setConversation(userId, conversation);
 
-    // Extract issues and create in Linear
-    const issueLinks = await processConversationEnd(conversation);
-
-    // Send closing message via DM
-    let closingMessage = "감사합니다! 좋은 하루 보내세요.";
-    if (issueLinks.length > 0) {
-      closingMessage += `\n\nLinear에 등록된 이슈: ${issueLinks.join(", ")}`;
-    }
-    await sendDM(userId, closingMessage);
-
-    // Post to daily scrum channel thread immediately
-    const threadTs = getDailyThread();
-    if (threadTs) {
-      const items = conversation.messages
-        .filter((m) => m.role === "user")
-        .map((m) => m.content);
-      const summary = items.join("\n");
-      const issueText = issueLinks.length > 0
-        ? `\nLinear: ${issueLinks.join(", ")}`
-        : "";
-      await replyInThread(
-        config.slack.scrumChannelId,
-        threadTs,
-        `*<@${userId}>*\n${summary}${issueText}`
-      );
-    }
-
-    deleteConversation(userId);
-    return;
+    await sendDM(userId, aiResponse);
+  } catch (error) {
+    console.error("handleDMMessage error:", error);
+    // AI 실패해도 최소한 응답은 보내기
+    await sendDM(userId, `죄송해요, 일시적인 오류가 발생했어요. 다시 메시지 보내주세요.\n\n오류: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
   }
-
-  // Generate AI follow-up response
-  conversation.status = "follow_up";
-  conversation.followUpCount++;
-
-  const aiResponse = await generateInterviewResponse(
-    conversation.messages,
-    conversation.followUpCount
-  );
-
-  conversation.messages.push({ role: "assistant", content: aiResponse, timestamp: Date.now() });
-  setConversation(userId, conversation);
-
-  await sendDM(userId, aiResponse);
 }
 
 export async function routeEvent(
