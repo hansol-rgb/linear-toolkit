@@ -36,6 +36,8 @@ export interface SlackMessageEvent extends SlackEvent {
   ts: string;
   channel: string;
   channel_type: string;
+  bot_id?: string;
+  app_id?: string;
 }
 
 // Slack Interactive Payload types

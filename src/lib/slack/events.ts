@@ -122,8 +122,10 @@ export async function handleDMMessage(
   const text = event.text;
   const now = Date.now();
 
-  // Ignore bot messages
+  // Ignore bot messages (subtype or bot user ID)
   if (event.subtype === "bot_message") return;
+  if (event.bot_id || event.app_id) return;
+  if (userId === "U0ARL2G57L3") return; // bot's own user ID
 
   try {
     let conversation = getConversation(userId);
