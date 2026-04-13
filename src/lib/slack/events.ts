@@ -18,7 +18,7 @@ import { generateInterviewResponse, shouldEndConversation } from "@/lib/ai/inter
 import { extractIssues } from "@/lib/ai/extract-issues";
 import { createIssue, addComment } from "@/lib/linear/issues";
 import { findSimilarIssues } from "@/lib/linear/search";
-import { findTeamByKey } from "@/lib/linear/teams";
+import { getTeams } from "@/lib/linear/teams";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -79,13 +79,17 @@ async function processConversationEnd(conversation: ConversationState): Promise<
   const issueLinks: string[] = [];
 
   try {
-    const extracted = await extractIssues(conversation.messages, "PROJECT");
+    // Get the first available team (BUB)
+    const teams = await getTeams();
+    const defaultTeam = teams[0];
+    if (!defaultTeam) return issueLinks;
+
+    const extracted = await extractIssues(conversation.messages, defaultTeam.key);
 
     for (const issue of extracted) {
       if (issue.confidence < 0.7) continue;
 
-      const team = await findTeamByKey(issue.teamKey);
-      if (!team) continue;
+      const team = defaultTeam;
 
       // Check for duplicates
       const similar = await findSimilarIssues(issue.title, team.id);
