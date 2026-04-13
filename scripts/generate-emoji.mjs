@@ -1,0 +1,27 @@
+import { writeFileSync } from 'fs';
+
+// Generate a 128x128 PNG using raw SVG → sharp conversion
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5E6AD2"/>
+      <stop offset="100%" style="stop-color:#3B41A8"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <rect x="30" y="30" width="68" height="68" rx="14" stroke="white" stroke-width="6" fill="none"/>
+  <path d="M 44 66 L 56 78 L 84 46" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>`;
+
+writeFileSync('public/emoji-task.svg', svg);
+console.log('SVG saved to public/emoji-task.svg');
+
+// Try to convert with sharp if available
+try {
+  const sharp = (await import('sharp')).default;
+  await sharp(Buffer.from(svg)).png().toFile('public/emoji-task.png');
+  console.log('PNG saved to public/emoji-task.png (128x128)');
+} catch {
+  console.log('sharp not installed. Run: npm install sharp && node scripts/generate-emoji.mjs');
+  console.log('Or open public/emoji-task.svg in a browser and screenshot it at 128x128.');
+}
