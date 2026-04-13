@@ -19,6 +19,7 @@ import { extractIssues } from "@/lib/ai/extract-issues";
 import { createIssue, addComment } from "@/lib/linear/issues";
 import { findSimilarIssues } from "@/lib/linear/search";
 import { getTeams } from "@/lib/linear/teams";
+import { ensureLabels } from "@/lib/linear/labels";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -97,12 +98,18 @@ async function processConversationEnd(conversation: ConversationState): Promise<
         await addComment(similar[0].id, `데일리 스크럼 업데이트:\n${issue.description}`);
         issueLinks.push(similar[0].identifier);
       } else {
+        // Ensure labels exist and get their IDs
+        const labelIds = issue.labels?.length
+          ? await ensureLabels(team.id, issue.labels)
+          : undefined;
+
         const created = await createIssue({
           title: issue.title,
           description: issue.description,
           teamId: team.id,
           priority: issue.priority,
           dueDate: issue.dueDate,
+          labelIds,
         });
         const identifier = await created.identifier;
         issueLinks.push(identifier);
