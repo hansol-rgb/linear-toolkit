@@ -7,6 +7,7 @@ import { getTeams } from "@/lib/linear/teams";
 // Emoji → action mapping
 const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
   "task": { type: "이슈", priority: 3 },               // :task: 커스텀 이모지
+  "emoji-task": { type: "이슈", priority: 3 },          // :emoji-task: 커스텀 이모지
   "clipboard": { type: "이슈", priority: 3 },          // 📋
   "memo": { type: "이슈", priority: 3 },               // 📝
   "bug": { type: "버그", priority: 2 },                // 🐛
