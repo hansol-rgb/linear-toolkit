@@ -6,10 +6,11 @@ import { getTeams } from "@/lib/linear/teams";
 
 // Emoji → action mapping
 const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
-  "clipboard": { type: "이슈", priority: 3 },        // 📋
-  "memo": { type: "이슈", priority: 3 },              // 📝
-  "bug": { type: "버그", priority: 2 },               // 🐛
-  "zap": { type: "긴급", priority: 1 },               // ⚡
+  "task": { type: "이슈", priority: 3 },               // :task: 커스텀 이모지
+  "clipboard": { type: "이슈", priority: 3 },          // 📋
+  "memo": { type: "이슈", priority: 3 },               // 📝
+  "bug": { type: "버그", priority: 2 },                // 🐛
+  "zap": { type: "긴급", priority: 1 },                // ⚡
   "pushpin": { type: "이슈", priority: 3 },            // 📌
 };
 
@@ -18,8 +19,12 @@ export async function handleReactionAdded(event: {
   reaction: string;
   item: { type: string; channel: string; ts: string };
 }): Promise<void> {
+  console.log("REACTION:", event.reaction, "from", event.user);
   const action = EMOJI_ACTIONS[event.reaction];
-  if (!action) return;
+  if (!action) {
+    console.log("Reaction not in EMOJI_ACTIONS, skipping:", event.reaction);
+    return;
+  }
 
   const client = getSlackClient();
 
