@@ -83,17 +83,17 @@ async function processConversationEnd(conversation: ConversationState): Promise<
   const issueLinks: string[] = [];
 
   try {
-    // Get the first available team (BUB)
+    // Get all teams for AI to choose from
     const teams = await getTeams();
-    const defaultTeam = teams[0];
-    if (!defaultTeam) return issueLinks;
+    if (teams.length === 0) return issueLinks;
 
-    const extracted = await extractIssues(conversation.messages, defaultTeam.key);
+    const extracted = await extractIssues(conversation.messages, "AUTO");
 
     for (const issue of extracted) {
       if (issue.confidence < 0.7) continue;
 
-      const team = defaultTeam;
+      // AI가 선택한 teamKey로 팀 매칭, 못 찾으면 첫 번째 팀
+      const team = teams.find((t) => t.key === issue.teamKey) || teams[0];
 
       // Build issue params
       const labelIds = issue.labels?.length

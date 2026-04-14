@@ -30,8 +30,9 @@ const REACTION_ISSUE_SCHEMA = {
       projectName: { type: ['string', 'null'], description: '관련 클라이언트/프로젝트 이름 (Adobe KR, Hecto 등)' },
       estimate: { type: ['number', 'null'], description: '예상 작업량 (1=작음, 2=보통, 3=큼, 5=매우 큼)' },
       priority: { type: 'number', enum: [1, 2, 3, 4] },
+      teamKey: { type: 'string', enum: ['PRD', 'PROJ'], description: '이슈를 등록할 팀' },
     },
-    required: ['title', 'description', 'priority'],
+    required: ['title', 'description', 'priority', 'teamKey'],
   },
 };
 
@@ -116,10 +117,9 @@ export async function handleReactionAdded(event: {
     // Ignore errors checking for duplicates
   }
 
-  // Get default team
+  // Get all teams
   const teams = await getTeams();
-  const team = teams[0];
-  if (!team) return;
+  if (teams.length === 0) return;
 
   // AI extracts structured issue from the message — use SMART model for quality
   const parsed = await chatStructured<{
@@ -129,10 +129,16 @@ export async function handleReactionAdded(event: {
     projectName?: string;
     estimate?: number;
     priority?: number;
+    teamKey?: string;
   }>(
     `오늘 날짜: ${new Date().toISOString().slice(0, 10)}
 슬랙 메시지를 Linear 이슈로 변환하세요.
 이슈 유형: ${action.type}
+
+## 팀 판단
+- **PRD** (프로덕트팀): 기획, 리서치, 스펙, 디자인, 사용자조사, 프로덕트 전략
+- **PROJ** (프로젝트팀): 클라이언트 프로젝트, 납품, 미팅, 클라이언트 커뮤니케이션, 운영
+클라이언트 이름이 언급되거나 실행/납품 성격이면 PROJ, 내부 기획/리서치면 PRD
 
 ## 규칙
 - 메시지의 **실제 내용**을 정확히 반영하세요. 내용을 변형하거나 추측하지 마세요.
@@ -157,6 +163,9 @@ export async function handleReactionAdded(event: {
     REACTION_ISSUE_SCHEMA,
     AI_MODEL_SMART,
   );
+
+  // AI가 선택한 teamKey로 팀 매칭
+  const team = teams.find((t) => t.key === parsed.teamKey) || teams[0];
 
   // Ensure labels exist
   const labelIds = parsed.labels?.length
