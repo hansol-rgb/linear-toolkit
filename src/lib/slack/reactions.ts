@@ -4,6 +4,8 @@ import { chatStructured, AI_MODEL_SMART } from "@/lib/ai/client";
 import { createIssue } from "@/lib/linear/issues";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
+import { applyTemplate } from "@/lib/ai/apply-template";
+import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
 
 // Emoji → action mapping
 const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
@@ -25,6 +27,8 @@ const REACTION_ISSUE_SCHEMA = {
       title: { type: 'string', description: '구체적이고 액션 가능한 이슈 제목' },
       description: { type: 'string', description: '마크다운 형식의 상세 설명' },
       labels: { type: 'array', items: { type: 'string' } },
+      projectName: { type: ['string', 'null'], description: '관련 클라이언트/프로젝트 이름 (Adobe KR, Hecto 등)' },
+      estimate: { type: ['number', 'null'], description: '예상 작업량 (1=작음, 2=보통, 3=큼, 5=매우 큼)' },
       priority: { type: 'number', enum: [1, 2, 3, 4] },
     },
     required: ['title', 'description', 'priority'],
@@ -122,6 +126,8 @@ export async function handleReactionAdded(event: {
     title: string;
     description: string;
     labels?: string[];
+    projectName?: string;
+    estimate?: number;
     priority?: number;
   }>(
     `오늘 날짜: ${new Date().toISOString().slice(0, 10)}
@@ -157,13 +163,31 @@ export async function handleReactionAdded(event: {
     ? await ensureLabels(team.id, parsed.labels)
     : undefined;
 
+  // Try to apply a template
+  let description = parsed.description;
+  const templateResult = await applyTemplate(messageText, team.key);
+  if (templateResult) {
+    description = templateResult.filledContent;
+  }
+
+  // Resolve project, state, assignee
+  const projectId = parsed.projectName
+    ? await resolveProjectId(parsed.projectName, team.id)
+    : undefined;
+  const stateId = await getTodoStateId(team.id);
+  const assigneeId = await resolveLinearUserId(event.user);
+
   // Create Linear issue
   const created = await createIssue({
     title: parsed.title,
-    description: `${parsed.description}\n\n---\n_슬랙 메시지에서 :${event.reaction}: 이모지로 자동 생성됨_`,
+    description: `${description}\n\n---\n_슬랙 메시지에서 :${event.reaction}: 이모지로 자동 생성됨_`,
     teamId: team.id,
+    projectId,
+    stateId,
     priority: parsed.priority ?? action.priority,
+    estimate: parsed.estimate ?? undefined,
     labelIds,
+    assigneeId,
   });
   const identifier = await created.identifier;
 

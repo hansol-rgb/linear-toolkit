@@ -11,6 +11,8 @@ export interface ExtractedIssue {
   templateName: string;
   priority: 1 | 2 | 3 | 4;
   labels: string[];
+  projectName?: string;
+  estimate?: number;
   dueDate?: string;
   isExistingIssue: boolean;
   existingIssueIdentifier?: string;

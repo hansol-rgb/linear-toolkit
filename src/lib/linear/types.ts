@@ -20,10 +20,12 @@ export interface CreateIssueParams {
   description?: string;
   teamId: string;
   projectId?: string;
-  priority?: number; // 0=none, 1=urgent, 2=high, 3=medium, 4=low
+  stateId?: string;          // 워크플로우 상태 ID
+  priority?: number;         // 0=none, 1=urgent, 2=high, 3=medium, 4=low
+  estimate?: number;         // 포인트 estimate
   labelIds?: string[];
   assigneeId?: string;
-  dueDate?: string; // ISO 8601
+  dueDate?: string;          // ISO 8601
 }
 
 export interface UpdateIssueParams {

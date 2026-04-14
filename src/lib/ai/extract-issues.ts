@@ -56,6 +56,8 @@ const EXTRACT_SCHEMA = {
             templateName: { type: 'string' },
             priority: { type: 'number', enum: [1, 2, 3, 4] },
             labels: { type: 'array', items: { type: 'string' } },
+            projectName: { type: ['string', 'null'], description: '관련 클라이언트/프로젝트 이름 (Adobe KR, Hecto 등)' },
+            estimate: { type: ['number', 'null'], description: '예상 작업량 (포인트: 1=작음, 2=보통, 3=큼, 5=매우 큼)' },
             dueDate: { type: ['string', 'null'] },
             isExistingIssue: { type: 'boolean' },
             existingIssueIdentifier: { type: ['string', 'null'] },

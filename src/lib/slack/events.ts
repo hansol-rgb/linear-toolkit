@@ -20,6 +20,9 @@ import { createIssue, addComment } from "@/lib/linear/issues";
 import { findSimilarIssues } from "@/lib/linear/search";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
+import { applyTemplate } from "@/lib/ai/apply-template";
+import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
+import { checkDuplicateAndAsk } from "@/lib/slack/duplicate-check";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -92,25 +95,64 @@ async function processConversationEnd(conversation: ConversationState): Promise<
 
       const team = defaultTeam;
 
-      // Check for duplicates
-      const similar = await findSimilarIssues(issue.title, team.id);
-      if (similar.length > 0 && issue.isExistingIssue && similar[0].identifier) {
-        await addComment(similar[0].id, `데일리 스크럼 업데이트:\n${issue.description}`);
-        issueLinks.push(similar[0].identifier);
-      } else {
-        // Ensure labels exist and get their IDs
-        const labelIds = issue.labels?.length
-          ? await ensureLabels(team.id, issue.labels)
-          : undefined;
+      // Build issue params
+      const labelIds = issue.labels?.length
+        ? await ensureLabels(team.id, issue.labels)
+        : undefined;
 
-        const created = await createIssue({
-          title: issue.title,
-          description: issue.description,
-          teamId: team.id,
-          priority: issue.priority,
-          dueDate: issue.dueDate,
-          labelIds,
-        });
+      let description = issue.description;
+      const conversationText = conversation.messages
+        .filter((m) => m.role === "user")
+        .map((m) => m.content)
+        .join("\n");
+      const templateResult = await applyTemplate(conversationText, team.key);
+      if (templateResult) {
+        description = templateResult.filledContent;
+      }
+
+      const projectId = issue.projectName
+        ? await resolveProjectId(issue.projectName, team.id)
+        : undefined;
+      const stateId = await getTodoStateId(team.id);
+      const assigneeId = await resolveLinearUserId(conversation.userId);
+
+      const pendingIssue = {
+        title: issue.title,
+        description,
+        teamId: team.id,
+        projectId,
+        stateId,
+        priority: issue.priority,
+        estimate: issue.estimate ?? undefined,
+        dueDate: issue.dueDate,
+        labelIds,
+        assigneeId,
+      };
+
+      // Check for duplicates — if found, ask user via DM buttons
+      // If issue mentions an existing identifier directly, update it
+      if (issue.isExistingIssue && issue.existingIssueIdentifier) {
+        const { getIssueByIdentifier } = await import("@/lib/linear/issues");
+        const existing = await getIssueByIdentifier(issue.existingIssueIdentifier);
+        if (existing) {
+          await addComment(existing.id, `데일리 스크럼 업데이트:\n${description}`);
+          issueLinks.push(issue.existingIssueIdentifier);
+          continue;
+        }
+      }
+
+      const duplicate = await checkDuplicateAndAsk(
+        conversation.userId,
+        issue.title,
+        team.id,
+        pendingIssue,
+      );
+
+      if (duplicate) {
+        // User will respond via interactive buttons — issue handled async
+        issueLinks.push(`(확인 대기: ${duplicate.identifier})`);
+      } else {
+        const created = await createIssue(pendingIssue);
         const identifier = await created.identifier;
         issueLinks.push(identifier);
       }
