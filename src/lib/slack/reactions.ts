@@ -7,8 +7,8 @@ import { createIssue } from "@/lib/linear/issues";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
-import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
-import { resolveTeamKeyFromChannel } from "./resolve-team";
+import { resolveProjectId, resolveProjectIdFromHint, resolveLinearUserId, getTodoStateId, getProjectListForPrompt } from "@/lib/linear/resolve";
+import { resolveChannelContext } from "./resolve-team";
 
 const PROMPT_PATH = path.join(process.cwd(), "src/prompts/reaction-issue.md");
 let systemPrompt: string | null = null;
@@ -130,10 +130,11 @@ export async function handleReactionAdded(event: {
     // Ignore errors checking for duplicates
   }
 
-  // Get all teams + resolve team from channel name
+  // Get all teams + resolve team and project from channel name
   const teams = await getTeams();
   if (teams.length === 0) return;
-  const channelTeamKey = await resolveTeamKeyFromChannel(event.item.channel);
+  const channelCtx = await resolveChannelContext(event.item.channel);
+  const projectList = await getProjectListForPrompt();
 
   // AI extracts structured issue from the message — use SMART model for quality
   const parsed = await chatStructured<{
@@ -145,14 +146,14 @@ export async function handleReactionAdded(event: {
     priority?: number;
     teamKey?: string;
   }>(
-    `오늘 날짜: ${new Date().toISOString().slice(0, 10)}\n이슈 유형: ${action.type}\n\n${getSystemPrompt()}`,
+    `오늘 날짜: ${new Date().toISOString().slice(0, 10)}\n이슈 유형: ${action.type}\n등록된 프로젝트: ${projectList || '없음'}\n\n${getSystemPrompt()}`,
     [{ role: "user", content: messageText }],
     REACTION_ISSUE_SCHEMA,
     AI_MODEL_SMART,
   );
 
   // 채널명 우선, 없으면 AI 판단
-  const effectiveTeamKey = channelTeamKey || parsed.teamKey;
+  const effectiveTeamKey = channelCtx.teamKey || parsed.teamKey;
   const team = teams.find((t) => t.key === effectiveTeamKey) || teams[0];
 
   // Ensure labels exist
@@ -167,10 +168,14 @@ export async function handleReactionAdded(event: {
     description = templateResult.filledContent;
   }
 
-  // Resolve project, state, assignee
-  const projectId = parsed.projectName
-    ? await resolveProjectId(parsed.projectName, team.id)
-    : undefined;
+  // Resolve project: 채널 힌트 → AI 판단 순
+  let projectId: string | undefined;
+  if (channelCtx.projectHint) {
+    projectId = await resolveProjectIdFromHint(channelCtx.projectHint, team.id);
+  }
+  if (!projectId && parsed.projectName) {
+    projectId = await resolveProjectId(parsed.projectName, team.id);
+  }
   const stateId = await getTodoStateId(team.id);
   const assigneeId = await resolveLinearUserId(event.user);
 

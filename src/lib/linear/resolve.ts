@@ -87,3 +87,52 @@ export async function resolveStateId(
 export async function getTodoStateId(teamId: string): Promise<string | undefined> {
   return resolveStateId(teamId, 'Todo');
 }
+
+/**
+ * 팀의 프로젝트 목록을 텍스트로 반환 (AI 프롬프트에 포함용)
+ */
+export async function getProjectListForPrompt(teamId?: string): Promise<string> {
+  const client = getLinearClient();
+  const projects = await client.projects({
+    ...(teamId && {
+      filter: { accessibleTeams: { id: { eq: teamId } } },
+    }),
+  });
+
+  if (projects.nodes.length === 0) return '';
+
+  return projects.nodes.map((p) => p.name).join(', ');
+}
+
+/**
+ * 프로젝트 이름으로 프로젝트 ID 찾기 (채널 힌트 기반, 더 유연한 매칭)
+ */
+export async function resolveProjectIdFromHint(hint: string, teamId: string): Promise<string | undefined> {
+  const client = getLinearClient();
+  const projects = await client.projects({
+    filter: {
+      accessibleTeams: { id: { eq: teamId } },
+    },
+  });
+
+  const lowerHint = hint.toLowerCase().replace(/[_-]/g, ' ');
+
+  // 1순위: 정확한 이름 매칭
+  const exact = projects.nodes.find(
+    (p) => p.name.toLowerCase() === lowerHint
+  );
+  if (exact) return exact.id;
+
+  // 2순위: 부분 매칭 (양방향)
+  const partial = projects.nodes.find(
+    (p) => p.name.toLowerCase().includes(lowerHint) || lowerHint.includes(p.name.toLowerCase())
+  );
+  if (partial) return partial.id;
+
+  // 3순위: 단어 단위 매칭 (adobe kr ↔ adobe)
+  const words = lowerHint.split(' ');
+  const wordMatch = projects.nodes.find(
+    (p) => words.some((w) => w.length > 2 && p.name.toLowerCase().includes(w))
+  );
+  return wordMatch?.id;
+}

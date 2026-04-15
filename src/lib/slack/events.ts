@@ -25,6 +25,8 @@ import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
 import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
 import { checkDuplicateAndAsk, handleDuplicateResponse, hasPendingDuplicate } from "@/lib/slack/duplicate-check";
+import { handleProjectResponse, hasPendingProjectSelection, askProjectSelection } from "@/lib/slack/ask-project";
+import { getProjectListForPrompt } from "@/lib/linear/resolve";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -112,9 +114,14 @@ async function processConversationEnd(conversation: ConversationState): Promise<
         description = templateResult.filledContent;
       }
 
-      const projectId = issue.projectName
+      let projectId = issue.projectName
         ? await resolveProjectId(issue.projectName, team.id)
         : undefined;
+
+      // 프로젝트 매칭 안 되면 유저에게 물어보기
+      if (!projectId) {
+        projectId = await askProjectSelection(conversation.userId, team.id, issue.title);
+      }
       const stateId = await getTodoStateId(team.id);
       const assigneeId = await resolveLinearUserId(conversation.userId);
 
@@ -177,6 +184,12 @@ export async function handleDMMessage(
   if (event.subtype === "bot_message" || event.bot_id || event.app_id) return;
 
   try {
+    // 프로젝트 선택 대기 중이면 그 응답 처리
+    if (hasPendingProjectSelection(userId)) {
+      await handleProjectResponse(userId, text);
+      return;
+    }
+
     // 중복 확인 대기 중이면 그 응답 처리
     if (hasPendingDuplicate(userId)) {
       await handleDuplicateResponse(userId, text);

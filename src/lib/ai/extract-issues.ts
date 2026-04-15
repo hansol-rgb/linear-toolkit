@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { chatStructured, AI_MODEL_SMART } from './client';
 import type { ConversationMessage, ExtractedIssue } from './types';
+import { getProjectListForPrompt } from '@/lib/linear/resolve';
 
 const PROMPT_PATH = path.join(process.cwd(), 'src/prompts/issue-extractor.md');
 let systemPrompt: string | null = null;
@@ -24,7 +25,8 @@ export async function extractIssues(
     .join('\n');
 
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
-  const userMessage = `오늘 날짜: ${today}\n팀 키: ${teamKey}\n\n대화 내용:\n${formatted}`;
+  const projectList = await getProjectListForPrompt();
+  const userMessage = `오늘 날짜: ${today}\n팀 키: ${teamKey}\n등록된 프로젝트: ${projectList || '없음'}\n\n대화 내용:\n${formatted}`;
 
   const result = await chatStructured<{ issues: ExtractedIssue[] }>(
     prompt,
