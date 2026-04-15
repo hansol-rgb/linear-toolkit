@@ -36,6 +36,7 @@ export async function updateIssue(
     priority: params.priority,
     assigneeId: params.assigneeId,
     labelIds: params.labelIds,
+    dueDate: params.dueDate,
   });
 
   const issue = await payload.issue;

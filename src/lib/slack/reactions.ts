@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { getSlackClient } from "./client";
 import { replyInThread } from "./channel";
 import { chatStructured, AI_MODEL_SMART } from "@/lib/ai/client";
@@ -6,6 +8,17 @@ import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
 import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
+import { resolveTeamKeyFromChannel } from "./resolve-team";
+
+const PROMPT_PATH = path.join(process.cwd(), "src/prompts/reaction-issue.md");
+let systemPrompt: string | null = null;
+
+function getSystemPrompt(): string {
+  if (!systemPrompt) {
+    systemPrompt = fs.readFileSync(PROMPT_PATH, "utf-8");
+  }
+  return systemPrompt;
+}
 
 // Emoji → action mapping
 const EMOJI_ACTIONS: Record<string, { type: string; priority: number }> = {
@@ -117,9 +130,10 @@ export async function handleReactionAdded(event: {
     // Ignore errors checking for duplicates
   }
 
-  // Get all teams
+  // Get all teams + resolve team from channel name
   const teams = await getTeams();
   if (teams.length === 0) return;
+  const channelTeamKey = await resolveTeamKeyFromChannel(event.item.channel);
 
   // AI extracts structured issue from the message — use SMART model for quality
   const parsed = await chatStructured<{
@@ -131,41 +145,15 @@ export async function handleReactionAdded(event: {
     priority?: number;
     teamKey?: string;
   }>(
-    `오늘 날짜: ${new Date().toISOString().slice(0, 10)}
-슬랙 메시지를 Linear 이슈로 변환하세요.
-이슈 유형: ${action.type}
-
-## 팀 판단
-- **PRD** (프로덕트팀): 기획, 리서치, 스펙, 디자인, 사용자조사, 프로덕트 전략
-- **PROJ** (프로젝트팀): 클라이언트 프로젝트, 납품, 미팅, 클라이언트 커뮤니케이션, 운영
-클라이언트 이름이 언급되거나 실행/납품 성격이면 PROJ, 내부 기획/리서치면 PRD
-
-## 규칙
-- 메시지의 **실제 내용**을 정확히 반영하세요. 내용을 변형하거나 추측하지 마세요.
-- 제목은 구체적이고 액션 가능하게 작성하세요.
-- 설명은 아래 구조를 반드시 따르세요.
-- 메시지에 URL이 있으면 설명에 포함하세요.
-- 여러 사람의 대화라면 핵심 내용을 종합하세요.
-
-## 설명 구조
-## 배경
-(이 작업이 필요한 맥락)
-
-## 할 일
-- [ ] 구체적인 액션 아이템
-
-## 완료 조건
-(이슈를 닫을 수 있는 조건)
-
-## 참고
-(URL, 관련 정보 등)`,
+    `오늘 날짜: ${new Date().toISOString().slice(0, 10)}\n이슈 유형: ${action.type}\n\n${getSystemPrompt()}`,
     [{ role: "user", content: messageText }],
     REACTION_ISSUE_SCHEMA,
     AI_MODEL_SMART,
   );
 
-  // AI가 선택한 teamKey로 팀 매칭
-  const team = teams.find((t) => t.key === parsed.teamKey) || teams[0];
+  // 채널명 우선, 없으면 AI 판단
+  const effectiveTeamKey = channelTeamKey || parsed.teamKey;
+  const team = teams.find((t) => t.key === effectiveTeamKey) || teams[0];
 
   // Ensure labels exist
   const labelIds = parsed.labels?.length

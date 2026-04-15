@@ -35,4 +35,5 @@ export interface UpdateIssueParams {
   priority?: number;
   assigneeId?: string;
   labelIds?: string[];
+  dueDate?: string;
 }

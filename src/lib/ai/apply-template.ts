@@ -1,5 +1,17 @@
+import fs from 'fs';
+import path from 'path';
 import { chatStructured, AI_MODEL_FAST } from './client';
 import { listTemplates, matchTemplate, fillTemplate, type ParsedTemplate } from '@/lib/templates/parser';
+
+const PROMPT_PATH = path.join(process.cwd(), 'src/prompts/template-filler.md');
+let systemPrompt: string | null = null;
+
+function getSystemPrompt(): string {
+  if (!systemPrompt) {
+    systemPrompt = fs.readFileSync(PROMPT_PATH, 'utf-8');
+  }
+  return systemPrompt;
+}
 
 /**
  * 대화 내용 또는 메시지에서 적합한 템플릿을 찾고, AI가 필드를 채운 결과를 반환합니다.
@@ -17,14 +29,7 @@ export async function applyTemplate(
   const today = new Date().toISOString().slice(0, 10);
 
   const filled = await chatStructured<Record<string, string>>(
-    `오늘 날짜: ${today}
-당신은 대화 내용을 분석하여 템플릿 필드를 채우는 전문가입니다.
-
-## 규칙
-- 대화에서 언급된 내용만 사용하세요. 추측하지 마세요.
-- 언급되지 않은 필드는 "해당 없음"으로 채우세요.
-- 한국어로 작성하세요.
-- 각 필드는 간결하지만 충분히 구체적으로 채우세요.`,
+    `오늘 날짜: ${today}\n\n${getSystemPrompt()}`,
     [{ role: 'user', content: `템플릿: ${template.name}\n필드: ${template.variables.join(', ')}\n\n원본 내용:\n${content}` }],
     schema,
     AI_MODEL_FAST,

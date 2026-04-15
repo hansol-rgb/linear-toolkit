@@ -15,6 +15,8 @@ import {
 } from "@/lib/conversation/store";
 import type { ConversationState } from "@/lib/conversation/types";
 import { generateInterviewResponse, shouldEndConversation } from "@/lib/ai/interview";
+import { classifyIntent } from "@/lib/ai/intent";
+import { executeCommand } from "@/lib/slack/commands";
 import { extractIssues } from "@/lib/ai/extract-issues";
 import { createIssue, addComment } from "@/lib/linear/issues";
 import { findSimilarIssues } from "@/lib/linear/search";
@@ -175,9 +177,21 @@ export async function handleDMMessage(
   if (event.subtype === "bot_message" || event.bot_id || event.app_id) return;
 
   try {
-    let conversation = getConversation(userId);
+    // 진행 중인 대화가 없으면 먼저 의도 분류
+    const existingConversation = getConversation(userId);
 
-    // No active conversation — start an ad-hoc one
+    if (!existingConversation) {
+      const intent = await classifyIntent(text);
+
+      if (intent.type === "command") {
+        await executeCommand(userId, intent);
+        return;
+      }
+    }
+
+    let conversation = existingConversation;
+
+    // No active conversation — start a new interview
     if (!conversation) {
       conversation = {
         userId,
