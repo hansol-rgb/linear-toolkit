@@ -1,6 +1,13 @@
-import { getSlackClient } from "./client";
-import type { KnownBlock } from "@slack/web-api";
+import { sendDM } from "./dm";
 import { findSimilarIssues } from "@/lib/linear/search";
+import { createIssue, addComment } from "@/lib/linear/issues";
+import { chat, AI_MODEL_FAST } from "@/lib/ai/client";
+import {
+  getConversation,
+  setConversation,
+  deleteConversation,
+} from "@/lib/conversation/store";
+import type { ConversationState } from "@/lib/conversation/types";
 import type { IssueSearchResult } from "@linear/sdk";
 
 export interface PendingIssue {
@@ -16,25 +23,14 @@ export interface PendingIssue {
   assigneeId?: string;
 }
 
-// 유저 응답 대기 중인 이슈 저장 (interaction에서 처리)
-const pendingIssues = new Map<string, PendingIssue>();
-
-export function storePendingIssue(key: string, issue: PendingIssue): void {
-  pendingIssues.set(key, issue);
-  // 1시간 후 자동 삭제
-  setTimeout(() => pendingIssues.delete(key), 3600000);
-}
-
-export function getPendingIssue(key: string): PendingIssue | undefined {
-  return pendingIssues.get(key);
-}
-
-export function deletePendingIssue(key: string): void {
-  pendingIssues.delete(key);
-}
+// 유저별 대기 중인 이슈 + 중복 후보
+const pendingDuplicates = new Map<string, {
+  pendingIssue: PendingIssue;
+  existingIssue: IssueSearchResult;
+}>();
 
 /**
- * 중복 이슈 확인. 비슷한 이슈가 있으면 유저에게 DM으로 확인 요청.
+ * 중복 이슈 확인. 비슷한 이슈가 있으면 대화로 확인 요청.
  * 반환값: 유사 이슈가 있어서 확인 요청을 보냈으면 해당 이슈, 없으면 null
  */
 export async function checkDuplicateAndAsk(
@@ -48,53 +44,62 @@ export async function checkDuplicateAndAsk(
   if (similar.length === 0) return null;
 
   const topMatch = similar[0];
-  const pendingKey = `${userId}-${Date.now()}`;
-  storePendingIssue(pendingKey, pendingIssue);
 
-  const client = getSlackClient();
-  const openResult = await client.conversations.open({ users: userId });
-  const channelId = openResult.channel?.id;
-  if (!channelId) return null;
-
-  const blocks: KnownBlock[] = [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `비슷한 이슈가 이미 있어요:\n*${topMatch.identifier}*: ${topMatch.title}\n\n새로 만들려는 이슈: *${title}*`,
-      },
-    },
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: { type: "plain_text", text: "기존 이슈에 업데이트" },
-          action_id: "duplicate_update",
-          value: JSON.stringify({ pendingKey, existingIssueId: topMatch.id }),
-          style: "primary",
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "새 이슈로 생성" },
-          action_id: "duplicate_create_new",
-          value: JSON.stringify({ pendingKey }),
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "건너뛰기" },
-          action_id: "duplicate_skip",
-          value: JSON.stringify({ pendingKey }),
-        },
-      ],
-    },
-  ];
-
-  await client.chat.postMessage({
-    channel: channelId,
-    text: `비슷한 이슈가 있어요: ${topMatch.identifier}`,
-    blocks,
+  // 대기 상태 저장
+  pendingDuplicates.set(userId, {
+    pendingIssue,
+    existingIssue: topMatch,
   });
 
+  await sendDM(
+    userId,
+    `비슷한 이슈가 이미 있어요:\n*${topMatch.identifier}*: ${topMatch.title}\n\n새로 만들려는 이슈: *${title}*\n\n기존 이슈를 업데이트할까요, 새로 만들까요? (업데이트 / 새로 만들어줘 / 건너뛰기)`,
+  );
+
   return topMatch;
+}
+
+/**
+ * 중복 확인 대기 중인 유저의 응답 처리.
+ * 반환값: 처리했으면 true, 대기 중인 게 없으면 false
+ */
+export async function handleDuplicateResponse(
+  userId: string,
+  text: string,
+): Promise<boolean> {
+  const pending = pendingDuplicates.get(userId);
+  if (!pending) return false;
+
+  const response = await chat(
+    `사용자의 응답을 분류하세요. "update", "create", "skip" 중 하나만 답하세요.
+- 기존 이슈 업데이트/기존 거/업데이트 → update
+- 새로 만들어/새 이슈/새로 → create
+- 건너뛰기/됐어/괜찮아/아니야 → skip`,
+    [{ role: 'user', content: text }],
+    AI_MODEL_FAST,
+  );
+
+  const action = response.trim().toLowerCase();
+  const { pendingIssue, existingIssue } = pending;
+  pendingDuplicates.delete(userId);
+
+  if (action.includes("update")) {
+    await addComment(existingIssue.id, `데일리 스크럼 업데이트:\n${pendingIssue.description}`);
+    await sendDM(userId, `*${existingIssue.identifier}* 에 업데이트했어요.`);
+  } else if (action.includes("create")) {
+    const created = await createIssue(pendingIssue);
+    const identifier = await created.identifier;
+    await sendDM(userId, `새 이슈로 생성했어요: *${identifier}* — ${pendingIssue.title}`);
+  } else {
+    await sendDM(userId, "건너뛰었어요.");
+  }
+
+  return true;
+}
+
+/**
+ * 유저가 중복 확인 대기 상태인지 체크
+ */
+export function hasPendingDuplicate(userId: string): boolean {
+  return pendingDuplicates.has(userId);
 }

@@ -24,7 +24,7 @@ import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
 import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
-import { checkDuplicateAndAsk } from "@/lib/slack/duplicate-check";
+import { checkDuplicateAndAsk, handleDuplicateResponse, hasPendingDuplicate } from "@/lib/slack/duplicate-check";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -177,6 +177,12 @@ export async function handleDMMessage(
   if (event.subtype === "bot_message" || event.bot_id || event.app_id) return;
 
   try {
+    // 중복 확인 대기 중이면 그 응답 처리
+    if (hasPendingDuplicate(userId)) {
+      await handleDuplicateResponse(userId, text);
+      return;
+    }
+
     // 진행 중인 대화가 없으면 먼저 의도 분류
     const existingConversation = getConversation(userId);
 
