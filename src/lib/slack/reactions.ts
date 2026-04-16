@@ -193,6 +193,20 @@ export async function handleReactionAdded(event: {
   });
   const identifier = await created.identifier;
 
+  // Get Slack permalink and add as Linear comment
+  try {
+    const permalinkResult = await client.chat.getPermalink({
+      channel: event.item.channel,
+      message_ts: event.item.ts,
+    });
+    if (permalinkResult.permalink) {
+      const { addComment } = await import("@/lib/linear/issues");
+      await addComment(created.id, `슬랙 원본 스레드: ${permalinkResult.permalink}`);
+    }
+  } catch {
+    // permalink 실패해도 이슈 생성은 완료
+  }
+
   // Reply in thread
   await replyInThread(
     event.item.channel,
