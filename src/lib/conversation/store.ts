@@ -3,19 +3,54 @@ import { ConversationState } from './types';
 // In-memory store for development. Replace with Vercel KV (Upstash Redis) for production.
 const conversations = new Map<string, ConversationState>();
 
-// Daily scrum thread — the main message ts for today's daily scrum channel post
-let dailyThreadTs: string | null = null;
-let dailyThreadDate: string | null = null;
+// Daily scrum thread — find today's daily message from the channel
+import { getSlackClient } from '@/lib/slack/client';
+import { config } from '@/lib/config';
+
+// In-memory cache (same instance only)
+let dailyThreadTsCache: string | null = null;
+let dailyThreadDateCache: string | null = null;
 
 export function setDailyThread(ts: string): void {
-  dailyThreadTs = ts;
-  dailyThreadDate = new Date().toISOString().slice(0, 10);
+  dailyThreadTsCache = ts;
+  dailyThreadDateCache = new Date().toISOString().slice(0, 10);
 }
 
-export function getDailyThread(): string | null {
+export async function getDailyThread(): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
-  if (dailyThreadDate !== today) return null;
-  return dailyThreadTs;
+
+  // 1. 캐시에 있으면 바로 반환
+  if (dailyThreadDateCache === today && dailyThreadTsCache) {
+    return dailyThreadTsCache;
+  }
+
+  // 2. 캐시에 없으면 슬랙 채널에서 오늘의 데일리 메시지 검색
+  try {
+    const client = getSlackClient();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const result = await client.conversations.history({
+      channel: config.slack.scrumChannelId,
+      oldest: String(todayStart.getTime() / 1000),
+      limit: 10,
+    });
+
+    // 봇이 오늘 올린 "데일리 스크럼" 메시지 찾기
+    const dailyMsg = result.messages?.find(
+      (m) => m.bot_id && m.text?.includes('데일리 스크럼')
+    );
+
+    if (dailyMsg?.ts) {
+      dailyThreadTsCache = dailyMsg.ts;
+      dailyThreadDateCache = today;
+      return dailyMsg.ts;
+    }
+  } catch {
+    // 채널 접근 실패 시 null
+  }
+
+  return null;
 }
 
 export function getConversation(userId: string): ConversationState | null {

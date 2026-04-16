@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const threadTs = getDailyThread();
+  const threadTs = await getDailyThread();
   if (!threadTs) {
     return NextResponse.json({ message: 'No daily thread found' });
   }

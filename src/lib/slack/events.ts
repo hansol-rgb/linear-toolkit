@@ -244,7 +244,7 @@ export async function handleDMMessage(
       await sendDM(userId, closingMessage);
 
       // Post to daily scrum channel thread immediately
-      const threadTs = getDailyThread();
+      const threadTs = await getDailyThread();
       if (threadTs) {
         const items = conversation.messages
           .filter((m) => m.role === "user")
