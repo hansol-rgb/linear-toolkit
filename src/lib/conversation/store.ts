@@ -47,7 +47,30 @@ export async function getDailyThread(): Promise<string | null> {
       return dailyMsg.ts;
     }
   } catch {
-    // 채널 접근 실패 시 null
+    // 채널 접근 실패 시 아래로 진행
+  }
+
+  // 3. 오늘 데일리 메시지가 없으면 직접 생성
+  try {
+    const { postToChannel } = await import('@/lib/slack/channel');
+    const todayStr = new Date().toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+    });
+    const client = getSlackClient();
+    const result = await client.chat.postMessage({
+      channel: config.slack.scrumChannelId,
+      text: `*${todayStr} 데일리 스크럼*\n팀원들의 오늘 할 일이 여기에 실시간으로 업데이트됩니다.`,
+    });
+    if (result.ts) {
+      dailyThreadTsCache = result.ts;
+      dailyThreadDateCache = today;
+      return result.ts;
+    }
+  } catch {
+    // 생성 실패
   }
 
   return null;
