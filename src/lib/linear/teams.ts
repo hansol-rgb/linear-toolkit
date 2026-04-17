@@ -1,9 +1,10 @@
 import type { Team } from "@linear/sdk";
 import { getLinearClient } from "./client";
+import { withRetry } from "./retry";
 
 export async function getTeams(): Promise<Team[]> {
   const client = getLinearClient();
-  const teams = await client.teams();
+  const teams = await withRetry(() => client.teams(), { label: "getTeams" });
   return teams.nodes;
 }
 

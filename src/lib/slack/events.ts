@@ -87,23 +87,48 @@ interface ProcessedIssue {
   title: string;
 }
 
-async function processConversationEnd(conversation: ConversationState): Promise<{ issues: ProcessedIssue[]; errors: string[] }> {
+const CONFIDENCE_THRESHOLD = 0.5;
+const DUE_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+function sanitizeDueDate(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  return DUE_DATE_REGEX.test(trimmed) ? trimmed : undefined;
+}
+
+function sanitizePriority(raw: number | undefined): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Number.isInteger(raw) || raw < 0 || raw > 4) return undefined;
+  return raw;
+}
+
+async function processConversationEnd(conversation: ConversationState): Promise<{ issues: ProcessedIssue[]; errors: string[]; notices: string[] }> {
   const issues: ProcessedIssue[] = [];
   const errors: string[] = [];
+  const notices: string[] = [];
+  const skippedLowConfidence: string[] = [];
 
   try {
     const teams = await getTeams();
     if (teams.length === 0) {
       errors.push("Linear 팀 정보를 가져오지 못했어요.");
-      return { issues, errors };
+      return { issues, errors, notices };
     }
 
     const extracted = await extractIssues(conversation.messages, "AUTO");
 
     for (const issue of extracted) {
-      if (issue.confidence < 0.7) continue;
+      if (issue.confidence < CONFIDENCE_THRESHOLD) {
+        skippedLowConfidence.push(`"${issue.title}" (신뢰도 ${issue.confidence.toFixed(2)})`);
+        continue;
+      }
 
-      const team = teams.find((t) => t.key === issue.teamKey) || teams[0];
+      // AI가 준 teamKey가 어느 팀과도 안 맞으면 경고 남기고 teams[0]로 폴백
+      const matchedTeam = teams.find((t) => t.key === issue.teamKey);
+      const team = matchedTeam || teams[0];
+      if (!matchedTeam && issue.teamKey) {
+        errors.push(`"${issue.title}": teamKey "${issue.teamKey}" 매칭 실패 → ${team.key}팀으로 생성`);
+      }
 
       try {
         const labelIds = issue.labels?.length
@@ -134,9 +159,9 @@ async function processConversationEnd(conversation: ConversationState): Promise<
           teamId: team.id,
           projectId,
           stateId,
-          priority: issue.priority,
+          priority: sanitizePriority(issue.priority),
           estimate: issue.estimate ?? undefined,
-          dueDate: issue.dueDate,
+          dueDate: sanitizeDueDate(issue.dueDate),
           labelIds,
           assigneeId,
         };
@@ -175,7 +200,13 @@ async function processConversationEnd(conversation: ConversationState): Promise<
     errors.push(`이슈 추출 실패: ${msg}`);
   }
 
-  return { issues, errors };
+  if (skippedLowConfidence.length > 0) {
+    notices.push(
+      `신뢰도 낮음으로 스킵 (등록 필요하면 수동으로):\n${skippedLowConfidence.map((s) => `  - ${s}`).join("\n")}`,
+    );
+  }
+
+  return { issues, errors, notices };
 }
 
 export async function handleDMMessage(
@@ -241,7 +272,7 @@ export async function handleDMMessage(
       setConversation(userId, conversation);
 
       // Extract issues and create in Linear
-      const { issues, errors } = await processConversationEnd(conversation);
+      const { issues, errors, notices } = await processConversationEnd(conversation);
 
       // Send closing message via DM (Slack-formatted clickable links)
       let closingMessage = "감사합니다! 좋은 하루 보내세요.";
@@ -251,6 +282,9 @@ export async function handleDMMessage(
       }
       if (errors.length > 0) {
         closingMessage += `\n\n⚠️ 일부 이슈 생성 실패:\n${errors.map((e) => `• ${e}`).join("\n")}`;
+      }
+      if (notices.length > 0) {
+        closingMessage += `\n\nℹ️ ${notices.join("\n")}`;
       }
       await sendDM(userId, closingMessage);
 

@@ -1,5 +1,6 @@
 import { getLinearClient } from './client';
 import { getSlackClient } from '@/lib/slack/client';
+import { withRetry } from './retry';
 
 /**
  * Slack User ID → Linear User ID 매핑
@@ -44,22 +45,34 @@ export async function resolveLinearUserId(slackUserId: string): Promise<string |
 }
 
 /**
- * 프로젝트 이름으로 프로젝트 ID 찾기 (부분 매칭)
+ * 프로젝트 이름으로 프로젝트 ID 찾기.
+ * 1순위: 정확한 이름 매칭 (대소문자 무시)
+ * 2순위: 프로젝트 이름이 입력값에 포함되거나 입력값이 프로젝트 이름에 포함 (양방향)
+ *        — 단, 너무 짧은 매칭(<3자) 제외하여 'a'가 'Adobe'에 매칭되는 것 방지
+ * 매칭 없으면 undefined (유저가 Linear에서 수동 지정)
  */
 export async function resolveProjectId(projectName: string, teamId: string): Promise<string | undefined> {
   const client = getLinearClient();
-  const projects = await client.projects({
-    filter: {
-      accessibleTeams: { id: { eq: teamId } },
-    },
-  });
-
-  const lowerName = projectName.toLowerCase();
-  const match = projects.nodes.find(
-    (p) => p.name.toLowerCase().includes(lowerName) || lowerName.includes(p.name.toLowerCase())
+  const projects = await withRetry(
+    () => client.projects({ filter: { accessibleTeams: { id: { eq: teamId } } } }),
+    { label: `projects(team=${teamId})` },
   );
 
-  return match?.id;
+  const lowerName = projectName.toLowerCase().trim();
+  if (lowerName.length < 2) return undefined;
+
+  // 1순위: 정확 매칭
+  const exact = projects.nodes.find((p) => p.name.toLowerCase() === lowerName);
+  if (exact) return exact.id;
+
+  // 2순위: 양방향 부분 매칭 (단, 짧은 이름 제외)
+  const partial = projects.nodes.find((p) => {
+    const pName = p.name.toLowerCase();
+    if (pName.length < 3 || lowerName.length < 3) return false;
+    return pName.includes(lowerName) || lowerName.includes(pName);
+  });
+
+  return partial?.id;
 }
 
 /**
@@ -70,8 +83,8 @@ export async function resolveStateId(
   stateName: string,
 ): Promise<string | undefined> {
   const client = getLinearClient();
-  const team = await client.team(teamId);
-  const states = await team.states();
+  const team = await withRetry(() => client.team(teamId), { label: `team(${teamId})` });
+  const states = await withRetry(() => team.states(), { label: `team(${teamId}).states` });
 
   const lowerName = stateName.toLowerCase();
   const match = states.nodes.find(
@@ -82,10 +95,24 @@ export async function resolveStateId(
 }
 
 /**
- * 팀의 "Todo" 상태 ID 반환 (기본 상태)
+ * 팀의 시작 상태 ID 반환. "Todo" → "할 일" → type=unstarted → 첫번째 상태 순서로 폴백.
  */
 export async function getTodoStateId(teamId: string): Promise<string | undefined> {
-  return resolveStateId(teamId, 'Todo');
+  const client = getLinearClient();
+  const team = await withRetry(() => client.team(teamId), { label: `team(${teamId})` });
+  const states = await withRetry(() => team.states(), { label: `team(${teamId}).states` });
+
+  const candidates = ['todo', '할 일', '할일'];
+  for (const name of candidates) {
+    const match = states.nodes.find((s) => s.name.toLowerCase() === name);
+    if (match) return match.id;
+  }
+
+  // type=unstarted 가 Linear의 "시작 전" 그룹
+  const unstarted = states.nodes.find((s) => s.type === 'unstarted');
+  if (unstarted) return unstarted.id;
+
+  return states.nodes[0]?.id;
 }
 
 /**

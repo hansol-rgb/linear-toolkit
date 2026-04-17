@@ -1,21 +1,25 @@
 import type { Issue } from "@linear/sdk";
 import { getLinearClient } from "./client";
+import { withRetry } from "./retry";
 import type { CreateIssueParams, UpdateIssueParams } from "./types";
 
 export async function createIssue(params: CreateIssueParams): Promise<Issue> {
   const client = getLinearClient();
-  const payload = await client.createIssue({
-    title: params.title,
-    description: params.description,
-    teamId: params.teamId,
-    projectId: params.projectId,
-    stateId: params.stateId,
-    priority: params.priority,
-    estimate: params.estimate,
-    labelIds: params.labelIds,
-    assigneeId: params.assigneeId,
-    dueDate: params.dueDate,
-  });
+  const payload = await withRetry(
+    () => client.createIssue({
+      title: params.title,
+      description: params.description,
+      teamId: params.teamId,
+      projectId: params.projectId,
+      stateId: params.stateId,
+      priority: params.priority,
+      estimate: params.estimate,
+      labelIds: params.labelIds,
+      assigneeId: params.assigneeId,
+      dueDate: params.dueDate,
+    }),
+    { label: `createIssue(${params.title})` },
+  );
 
   const issue = await payload.issue;
   if (!issue) {
@@ -29,15 +33,18 @@ export async function updateIssue(
   params: UpdateIssueParams
 ): Promise<Issue> {
   const client = getLinearClient();
-  const payload = await client.updateIssue(issueId, {
-    title: params.title,
-    description: params.description,
-    stateId: params.stateId,
-    priority: params.priority,
-    assigneeId: params.assigneeId,
-    labelIds: params.labelIds,
-    dueDate: params.dueDate,
-  });
+  const payload = await withRetry(
+    () => client.updateIssue(issueId, {
+      title: params.title,
+      description: params.description,
+      stateId: params.stateId,
+      priority: params.priority,
+      assigneeId: params.assigneeId,
+      labelIds: params.labelIds,
+      dueDate: params.dueDate,
+    }),
+    { label: `updateIssue(${issueId})` },
+  );
 
   const issue = await payload.issue;
   if (!issue) {
@@ -51,7 +58,10 @@ export async function addComment(
   body: string
 ): Promise<void> {
   const client = getLinearClient();
-  await client.createComment({ issueId, body });
+  await withRetry(
+    () => client.createComment({ issueId, body }),
+    { label: `addComment(${issueId})` },
+  );
 }
 
 export async function getMyIssues(userId?: string): Promise<Issue[]> {
