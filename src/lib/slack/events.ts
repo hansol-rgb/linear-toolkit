@@ -81,15 +81,21 @@ export function handleUrlVerification(
   return { challenge: event.challenge };
 }
 
-async function processConversationEnd(conversation: ConversationState): Promise<{ issueLinks: string[]; errors: string[] }> {
-  const issueLinks: string[] = [];
+interface ProcessedIssue {
+  identifier: string;
+  url: string;
+  title: string;
+}
+
+async function processConversationEnd(conversation: ConversationState): Promise<{ issues: ProcessedIssue[]; errors: string[] }> {
+  const issues: ProcessedIssue[] = [];
   const errors: string[] = [];
 
   try {
     const teams = await getTeams();
     if (teams.length === 0) {
       errors.push("Linear 팀 정보를 가져오지 못했어요.");
-      return { issueLinks, errors };
+      return { issues, errors };
     }
 
     const extracted = await extractIssues(conversation.messages, "AUTO");
@@ -142,14 +148,21 @@ async function processConversationEnd(conversation: ConversationState): Promise<
           const existing = await getIssueByIdentifier(issue.existingIssueIdentifier);
           if (existing) {
             await addComment(existing.id, `데일리 스크럼 업데이트:\n${description}`);
-            issueLinks.push(issue.existingIssueIdentifier);
+            issues.push({
+              identifier: existing.identifier,
+              url: existing.url,
+              title: existing.title,
+            });
             continue;
           }
         }
 
         const created = await createIssue(pendingIssue);
-        const identifier = await created.identifier;
-        issueLinks.push(identifier);
+        issues.push({
+          identifier: created.identifier,
+          url: created.url,
+          title: created.title,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "알 수 없는 오류";
         console.error(`Failed to create issue "${issue.title}":`, err);
@@ -162,7 +175,7 @@ async function processConversationEnd(conversation: ConversationState): Promise<
     errors.push(`이슈 추출 실패: ${msg}`);
   }
 
-  return { issueLinks, errors };
+  return { issues, errors };
 }
 
 export async function handleDMMessage(
@@ -226,12 +239,13 @@ export async function handleDMMessage(
       setConversation(userId, conversation);
 
       // Extract issues and create in Linear
-      const { issueLinks, errors } = await processConversationEnd(conversation);
+      const { issues, errors } = await processConversationEnd(conversation);
 
-      // Send closing message via DM
+      // Send closing message via DM (Slack-formatted clickable links)
       let closingMessage = "감사합니다! 좋은 하루 보내세요.";
-      if (issueLinks.length > 0) {
-        closingMessage += `\n\nLinear에 등록된 이슈: ${issueLinks.join(", ")}`;
+      if (issues.length > 0) {
+        const lines = issues.map((i) => `• <${i.url}|${i.identifier}>: ${i.title}`).join("\n");
+        closingMessage += `\n\nLinear에 등록된 이슈:\n${lines}`;
       }
       if (errors.length > 0) {
         closingMessage += `\n\n⚠️ 일부 이슈 생성 실패:\n${errors.map((e) => `• ${e}`).join("\n")}`;
@@ -246,24 +260,13 @@ export async function handleDMMessage(
           .map((m) => m.content)
           .join("\n");
 
-        // issueLinks에서 이슈 제목도 가져오기
-        const issueDetails: string[] = [];
-        for (const link of issueLinks) {
-          if (link.startsWith("(")) continue; // 확인 대기 건 스킵
-          try {
-            const { getIssueByIdentifier } = await import("@/lib/linear/issues");
-            const issue = await getIssueByIdentifier(link);
-            if (issue) {
-              issueDetails.push(`• ${link}: ${issue.title}`);
-            }
-          } catch {
-            issueDetails.push(`• ${link}`);
-          }
-        }
+        const issueDetails = issues.map(
+          (i) => `• <${i.url}|${i.identifier}>: ${i.title}`,
+        );
 
         // AI로 이슈로 안 만든 항목만 추출 (회의, 1on1 등)
         const { chat: chatFn } = await import("@/lib/ai/client");
-        const issueTitles = issueDetails.map((d) => d.split(": ").slice(1).join(": ")).join(", ");
+        const issueTitles = issues.map((i) => i.title).join(", ");
         const otherItems = await chatFn(
           `대화 내용에서 이미 이슈로 만들어진 항목을 제외하고, 이슈로 만들지 않은 기타 할 일(회의, 1on1, 싱크, 리마인더 등)만 불릿 포인트(•)로 정리하세요. 없으면 빈 문자열만 출력. 인사말이나 설명 없이 리스트만.
 
