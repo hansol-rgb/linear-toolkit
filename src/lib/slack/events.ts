@@ -19,14 +19,12 @@ import { classifyIntent } from "@/lib/ai/intent";
 import { executeCommand } from "@/lib/slack/commands";
 import { extractIssues } from "@/lib/ai/extract-issues";
 import { createIssue, addComment } from "@/lib/linear/issues";
-import { findSimilarIssues } from "@/lib/linear/search";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
 import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
-import { checkDuplicateAndAsk, handleDuplicateResponse, hasPendingDuplicate } from "@/lib/slack/duplicate-check";
-import { handleProjectResponse, hasPendingProjectSelection, askProjectSelection } from "@/lib/slack/ask-project";
-import { getProjectListForPrompt } from "@/lib/linear/resolve";
+import { handleDuplicateResponse, hasPendingDuplicate } from "@/lib/slack/duplicate-check";
+import { handleProjectResponse, hasPendingProjectSelection } from "@/lib/slack/ask-project";
 import { config } from "@/lib/config";
 
 // Event deduplication: in-memory Map with TTL
@@ -83,94 +81,88 @@ export function handleUrlVerification(
   return { challenge: event.challenge };
 }
 
-async function processConversationEnd(conversation: ConversationState): Promise<string[]> {
+async function processConversationEnd(conversation: ConversationState): Promise<{ issueLinks: string[]; errors: string[] }> {
   const issueLinks: string[] = [];
+  const errors: string[] = [];
 
   try {
-    // Get all teams for AI to choose from
     const teams = await getTeams();
-    if (teams.length === 0) return issueLinks;
+    if (teams.length === 0) {
+      errors.push("Linear 팀 정보를 가져오지 못했어요.");
+      return { issueLinks, errors };
+    }
 
     const extracted = await extractIssues(conversation.messages, "AUTO");
 
     for (const issue of extracted) {
       if (issue.confidence < 0.7) continue;
 
-      // AI가 선택한 teamKey로 팀 매칭, 못 찾으면 첫 번째 팀
       const team = teams.find((t) => t.key === issue.teamKey) || teams[0];
 
-      // Build issue params
-      const labelIds = issue.labels?.length
-        ? await ensureLabels(team.id, issue.labels)
-        : undefined;
+      try {
+        const labelIds = issue.labels?.length
+          ? await ensureLabels(team.id, issue.labels)
+          : undefined;
 
-      let description = issue.description;
-      const conversationText = conversation.messages
-        .filter((m) => m.role === "user")
-        .map((m) => m.content)
-        .join("\n");
-      const templateResult = await applyTemplate(conversationText, team.key);
-      if (templateResult) {
-        description = templateResult.filledContent;
-      }
-
-      let projectId = issue.projectName
-        ? await resolveProjectId(issue.projectName, team.id)
-        : undefined;
-
-      // 프로젝트 매칭 안 되면 유저에게 물어보기
-      if (!projectId) {
-        projectId = await askProjectSelection(conversation.userId, team.id, issue.title);
-      }
-      const stateId = await getTodoStateId(team.id);
-      const assigneeId = await resolveLinearUserId(conversation.userId);
-
-      const pendingIssue = {
-        title: issue.title,
-        description,
-        teamId: team.id,
-        projectId,
-        stateId,
-        priority: issue.priority,
-        estimate: issue.estimate ?? undefined,
-        dueDate: issue.dueDate,
-        labelIds,
-        assigneeId,
-      };
-
-      // Check for duplicates — if found, ask user via DM buttons
-      // If issue mentions an existing identifier directly, update it
-      if (issue.isExistingIssue && issue.existingIssueIdentifier) {
-        const { getIssueByIdentifier } = await import("@/lib/linear/issues");
-        const existing = await getIssueByIdentifier(issue.existingIssueIdentifier);
-        if (existing) {
-          await addComment(existing.id, `데일리 스크럼 업데이트:\n${description}`);
-          issueLinks.push(issue.existingIssueIdentifier);
-          continue;
+        let description = issue.description;
+        const conversationText = conversation.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.content)
+          .join("\n");
+        const templateResult = await applyTemplate(conversationText, team.key);
+        if (templateResult) {
+          description = templateResult.filledContent;
         }
-      }
 
-      const duplicate = await checkDuplicateAndAsk(
-        conversation.userId,
-        issue.title,
-        team.id,
-        pendingIssue,
-      );
+        // 프로젝트 자동 매칭만 시도. 안 맞으면 프로젝트 없이 생성 (Linear에서 나중에 설정 가능).
+        const projectId = issue.projectName
+          ? await resolveProjectId(issue.projectName, team.id)
+          : undefined;
 
-      if (duplicate) {
-        // User will respond via interactive buttons — issue handled async
-        issueLinks.push(`(확인 대기: ${duplicate.identifier})`);
-      } else {
+        const stateId = await getTodoStateId(team.id);
+        const assigneeId = await resolveLinearUserId(conversation.userId);
+
+        const pendingIssue = {
+          title: issue.title,
+          description,
+          teamId: team.id,
+          projectId,
+          stateId,
+          priority: issue.priority,
+          estimate: issue.estimate ?? undefined,
+          dueDate: issue.dueDate,
+          labelIds,
+          assigneeId,
+        };
+
+        // 기존 이슈 업데이트로 명시된 경우만 업데이트, 나머지는 무조건 신규 생성.
+        // (중복 감지는 유사 키워드만으로 거짓양성 많아서 비활성화 — Linear UI에서 사람이 판단)
+        if (issue.isExistingIssue && issue.existingIssueIdentifier) {
+          const { getIssueByIdentifier } = await import("@/lib/linear/issues");
+          const existing = await getIssueByIdentifier(issue.existingIssueIdentifier);
+          if (existing) {
+            await addComment(existing.id, `데일리 스크럼 업데이트:\n${description}`);
+            issueLinks.push(issue.existingIssueIdentifier);
+            continue;
+          }
+        }
+
         const created = await createIssue(pendingIssue);
         const identifier = await created.identifier;
         issueLinks.push(identifier);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "알 수 없는 오류";
+        console.error(`Failed to create issue "${issue.title}":`, err);
+        errors.push(`"${issue.title}" 생성 실패: ${msg}`);
       }
     }
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "알 수 없는 오류";
     console.error("Error processing issues:", error);
+    errors.push(`이슈 추출 실패: ${msg}`);
   }
 
-  return issueLinks;
+  return { issueLinks, errors };
 }
 
 export async function handleDMMessage(
@@ -234,12 +226,15 @@ export async function handleDMMessage(
       setConversation(userId, conversation);
 
       // Extract issues and create in Linear
-      const issueLinks = await processConversationEnd(conversation);
+      const { issueLinks, errors } = await processConversationEnd(conversation);
 
       // Send closing message via DM
       let closingMessage = "감사합니다! 좋은 하루 보내세요.";
       if (issueLinks.length > 0) {
         closingMessage += `\n\nLinear에 등록된 이슈: ${issueLinks.join(", ")}`;
+      }
+      if (errors.length > 0) {
+        closingMessage += `\n\n⚠️ 일부 이슈 생성 실패:\n${errors.map((e) => `• ${e}`).join("\n")}`;
       }
       await sendDM(userId, closingMessage);
 
