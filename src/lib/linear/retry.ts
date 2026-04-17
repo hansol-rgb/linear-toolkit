@@ -19,7 +19,7 @@ const RETRIABLE_PATTERNS = [
   '504',
 ];
 
-function isRetriable(err: unknown): boolean {
+export function isRetriable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
   return RETRIABLE_PATTERNS.some((p) => msg.includes(p));

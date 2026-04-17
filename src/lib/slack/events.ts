@@ -18,11 +18,14 @@ import { generateInterviewResponse, shouldEndConversation } from "@/lib/ai/inter
 import { classifyIntent } from "@/lib/ai/intent";
 import { executeCommand } from "@/lib/slack/commands";
 import { extractIssues } from "@/lib/ai/extract-issues";
-import { createIssue, addComment } from "@/lib/linear/issues";
+import { createIssue, addComment, getIssueByIdentifier } from "@/lib/linear/issues";
+import { chat as chatFn } from "@/lib/ai/client";
+import { handleReactionAdded } from "./reactions";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
 import { applyTemplate } from "@/lib/ai/apply-template";
 import { resolveProjectId, resolveLinearUserId, getTodoStateId } from "@/lib/linear/resolve";
+import { sanitizeDueDate, sanitizePriority } from "@/lib/linear/sanitize";
 import { handleDuplicateResponse, hasPendingDuplicate } from "@/lib/slack/duplicate-check";
 import { handleProjectResponse, hasPendingProjectSelection } from "@/lib/slack/ask-project";
 import { config } from "@/lib/config";
@@ -88,19 +91,6 @@ interface ProcessedIssue {
 }
 
 const CONFIDENCE_THRESHOLD = 0.5;
-const DUE_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-function sanitizeDueDate(raw: string | null | undefined): string | undefined {
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  return DUE_DATE_REGEX.test(trimmed) ? trimmed : undefined;
-}
-
-function sanitizePriority(raw: number | undefined): number | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (!Number.isInteger(raw) || raw < 0 || raw > 4) return undefined;
-  return raw;
-}
 
 async function processConversationEnd(conversation: ConversationState): Promise<{ issues: ProcessedIssue[]; errors: string[]; notices: string[] }> {
   const issues: ProcessedIssue[] = [];
@@ -169,7 +159,6 @@ async function processConversationEnd(conversation: ConversationState): Promise<
         // 기존 이슈 업데이트로 명시된 경우만 업데이트, 나머지는 무조건 신규 생성.
         // (중복 감지는 유사 키워드만으로 거짓양성 많아서 비활성화 — Linear UI에서 사람이 판단)
         if (issue.isExistingIssue && issue.existingIssueIdentifier) {
-          const { getIssueByIdentifier } = await import("@/lib/linear/issues");
           const existing = await getIssueByIdentifier(issue.existingIssueIdentifier);
           if (existing) {
             await addComment(existing.id, `데일리 스크럼 업데이트:\n${description}`);
@@ -301,7 +290,6 @@ export async function handleDMMessage(
         );
 
         // AI로 이슈로 안 만든 항목만 추출 (회의, 1on1 등)
-        const { chat: chatFn } = await import("@/lib/ai/client");
         const issueTitles = issues.map((i) => i.title).join(", ");
         const otherItems = await chatFn(
           `대화 내용에서 이미 이슈로 만들어진 항목을 제외하고, 이슈로 만들지 않은 기타 할 일(회의, 1on1, 싱크, 리마인더 등)만 불릿 포인트(•)로 정리하세요. 없으면 빈 문자열만 출력. 인사말이나 설명 없이 리스트만.
@@ -364,7 +352,6 @@ export async function routeEvent(
   }
 
   if (event.type === "reaction_added") {
-    const { handleReactionAdded } = await import("./reactions");
     const raw = event as unknown as { user: string; reaction: string; item: { type: string; channel: string; ts: string } };
     await handleReactionAdded({
       user: raw.user,
