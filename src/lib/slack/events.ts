@@ -246,17 +246,23 @@ export async function handleDMMessage(
       // Post to daily scrum channel thread immediately
       const threadTs = await getDailyThread();
       if (threadTs) {
-        const items = conversation.messages
+        // AI로 대화 내용을 깔끔한 리스트로 요약
+        const conversationText = conversation.messages
           .filter((m) => m.role === "user")
-          .map((m) => m.content);
-        const summary = items.join("\n");
+          .map((m) => m.content)
+          .join("\n");
+        const { chat: chatFn } = await import("@/lib/ai/client");
+        const bulletSummary = await chatFn(
+          "슬랙 데일리 스크럼 채널에 올릴 요약을 작성하세요. 규칙: 불릿 포인트(•)로 핵심 할 일만 간결하게 정리. 한 항목당 한 줄. 인사말이나 부가 설명 없이 리스트만 출력.",
+          [{ role: "user", content: conversationText }],
+        );
         const issueText = issueLinks.length > 0
           ? `\nLinear: ${issueLinks.join(", ")}`
           : "";
         await replyInThread(
           config.slack.scrumChannelId,
           threadTs,
-          `*<@${userId}>*\n${summary}${issueText}`
+          `*<@${userId}>*\n${bulletSummary}${issueText}`
         );
       }
 
