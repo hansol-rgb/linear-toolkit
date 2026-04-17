@@ -26,14 +26,27 @@ export async function ensureLabels(
   const labelIds: string[] = [];
 
   for (const name of names) {
-    // 워크스페이스 + 팀 레벨 라벨 모두 검색 (같은 이름이 워크스페이스에 있으면 팀 생성 실패함)
+    // 같은 이름 라벨을 워크스페이스 전체에서 검색 (팀 레벨 라벨과 워크스페이스 레벨 라벨 포함)
     const found = await client.issueLabels({
       filter: { name: { eqIgnoreCase: name } },
     });
 
-    const match = found.nodes[0];
-    if (match) {
-      labelIds.push(match.id);
+    // 현재 팀에 속한 라벨 또는 워크스페이스 레벨 라벨(team=null)만 사용 가능.
+    // 다른 팀에 속한 라벨은 이슈에 붙이면 "LabelIds for incorrect team" 에러.
+    let match: string | null = null;
+    let workspaceLevel: string | null = null;
+    for (const label of found.nodes) {
+      const labelTeam = await label.team;
+      if (!labelTeam) {
+        workspaceLevel = label.id;
+      } else if (labelTeam.id === teamId) {
+        match = label.id;
+        break;
+      }
+    }
+
+    if (match || workspaceLevel) {
+      labelIds.push((match || workspaceLevel) as string);
       continue;
     }
 
