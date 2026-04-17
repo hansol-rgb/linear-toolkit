@@ -246,23 +246,49 @@ export async function handleDMMessage(
       // Post to daily scrum channel thread immediately
       const threadTs = await getDailyThread();
       if (threadTs) {
-        // AI로 대화 내용을 깔끔한 리스트로 요약
         const conversationText = conversation.messages
           .filter((m) => m.role === "user")
           .map((m) => m.content)
           .join("\n");
+
+        // issueLinks에서 이슈 제목도 가져오기
+        const issueDetails: string[] = [];
+        for (const link of issueLinks) {
+          if (link.startsWith("(")) continue; // 확인 대기 건 스킵
+          try {
+            const { getIssueByIdentifier } = await import("@/lib/linear/issues");
+            const issue = await getIssueByIdentifier(link);
+            if (issue) {
+              issueDetails.push(`• ${link}: ${issue.title}`);
+            }
+          } catch {
+            issueDetails.push(`• ${link}`);
+          }
+        }
+
+        // AI로 이슈로 안 만든 항목만 추출 (회의, 1on1 등)
         const { chat: chatFn } = await import("@/lib/ai/client");
-        const bulletSummary = await chatFn(
-          "슬랙 데일리 스크럼 채널에 올릴 요약을 작성하세요. 규칙: 불릿 포인트(•)로 핵심 할 일만 간결하게 정리. 한 항목당 한 줄. 인사말이나 부가 설명 없이 리스트만 출력.",
+        const issueTitles = issueDetails.map((d) => d.split(": ").slice(1).join(": ")).join(", ");
+        const otherItems = await chatFn(
+          `대화 내용에서 이미 이슈로 만들어진 항목을 제외하고, 이슈로 만들지 않은 기타 할 일(회의, 1on1, 싱크, 리마인더 등)만 불릿 포인트(•)로 정리하세요. 없으면 빈 문자열만 출력. 인사말이나 설명 없이 리스트만.
+
+이미 이슈로 만든 항목: ${issueTitles || "없음"}`,
           [{ role: "user", content: conversationText }],
         );
-        const issueText = issueLinks.length > 0
-          ? `\nLinear: ${issueLinks.join(", ")}`
-          : "";
+
+        // 포맷: 이슈 링크 + 기타 항목
+        let threadMessage = `*<@${userId}>*`;
+        if (issueDetails.length > 0) {
+          threadMessage += `\n${issueDetails.join("\n")}`;
+        }
+        if (otherItems.trim()) {
+          threadMessage += `\n${otherItems.trim()}`;
+        }
+
         await replyInThread(
           config.slack.scrumChannelId,
           threadTs,
-          `*<@${userId}>*\n${bulletSummary}${issueText}`
+          threadMessage,
         );
       }
 
