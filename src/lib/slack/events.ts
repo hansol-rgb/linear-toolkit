@@ -234,7 +234,9 @@ export async function handleDMMessage(
     // Check if conversation should end
     const shouldEnd = await shouldEndConversation(conversation.messages);
 
-    if (shouldEnd || conversation.followUpCount >= 2) {
+    // follow-up 최대 1회. 그 이후 유저 응답이 오면 바로 이슈 생성 + 마무리.
+    // (이전엔 2였는데 AI가 마무리 인사를 보낸 다음 턴에야 종료되는 버그 있었음)
+    if (shouldEnd || conversation.followUpCount >= 1) {
       conversation.status = "completed";
       setConversation(userId, conversation);
 

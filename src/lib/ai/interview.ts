@@ -15,21 +15,16 @@ function getSystemPrompt(): string {
 
 export async function generateInterviewResponse(
   conversationHistory: ConversationMessage[],
-  followUpCount: number,
+  _followUpCount: number,
 ): Promise<string> {
   const prompt = getSystemPrompt();
-
-  const closingSuffix =
-    followUpCount >= 2
-      ? '\n\n[시스템 지시: 이 팀원과의 대화를 마무리하세요. 감사 인사와 함께 오늘 하루 응원 메시지를 전하세요.]'
-      : '';
 
   const messages = conversationHistory.map((msg) => ({
     role: msg.role,
     content: msg.content,
   }));
 
-  return chat(prompt + closingSuffix, messages, AI_MODEL_FAST);
+  return chat(prompt, messages, AI_MODEL_FAST);
 }
 
 export async function shouldEndConversation(
