@@ -26,7 +26,10 @@ export async function extractIssues(
 
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
   const projectList = await getProjectListForPrompt();
-  const userMessage = `오늘 날짜: ${today}\n팀 키: ${teamKey}\n등록된 프로젝트: ${projectList || '없음'}\n\n대화 내용:\n${formatted}`;
+  const teamDirective = teamKey === 'AUTO'
+    ? '팀 결정: 각 이슈별로 내용에 따라 PRD 또는 PROJ 중 하나를 반드시 선택'
+    : `팀 키: ${teamKey}`;
+  const userMessage = `오늘 날짜: ${today}\n${teamDirective}\n등록된 프로젝트: ${projectList || '없음'}\n\n대화 내용:\n${formatted}`;
 
   const result = await chatStructured<{ issues: ExtractedIssue[] }>(
     prompt,
@@ -54,7 +57,7 @@ const EXTRACT_SCHEMA = {
           properties: {
             title: { type: 'string', description: '구체적이고 액션 가능한 이슈 제목' },
             description: { type: 'string', description: '마크다운 형식의 상세 설명 (배경/할 일/완료 조건 포함)' },
-            teamKey: { type: 'string' },
+            teamKey: { type: 'string', enum: ['PRD', 'PROJ'], description: 'PRD=기획/리서치/디자인/스펙, PROJ=클라이언트 실행/납품/미팅/리포트' },
             templateName: { type: 'string' },
             priority: { type: 'number', enum: [1, 2, 3, 4] },
             labels: { type: 'array', items: { type: 'string' } },
@@ -65,7 +68,7 @@ const EXTRACT_SCHEMA = {
             existingIssueIdentifier: { type: ['string', 'null'] },
             confidence: { type: 'number' },
           },
-          required: ['title', 'description', 'priority', 'confidence'],
+          required: ['title', 'description', 'teamKey', 'priority', 'confidence'],
         },
       },
     },

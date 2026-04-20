@@ -116,6 +116,7 @@ async function processConversationEnd(conversation: ConversationState): Promise<
       // AI가 준 teamKey가 어느 팀과도 안 맞으면 경고 남기고 teams[0]로 폴백
       const matchedTeam = teams.find((t) => t.key === issue.teamKey);
       const team = matchedTeam || teams[0];
+      console.log(`[extract] "${issue.title}" → AI teamKey=${issue.teamKey ?? 'null'}, 실제 팀=${team.key}`);
       if (!matchedTeam && issue.teamKey) {
         errors.push(`"${issue.title}": teamKey "${issue.teamKey}" 매칭 실패 → ${team.key}팀으로 생성`);
       }
