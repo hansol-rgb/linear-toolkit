@@ -49,10 +49,21 @@ const REACTION_ISSUE_SCHEMA = {
   },
 };
 
+interface ThreadMessage {
+  user?: string;
+  text?: string;
+  ts?: string;
+}
+
+interface MessageContext {
+  aiText: string;
+  messages: ThreadMessage[];
+}
+
 async function getMessageContext(
   channel: string,
   ts: string,
-): Promise<string | null> {
+): Promise<MessageContext | null> {
   const client = getSlackClient();
 
   // First try: fetch as a thread reply (conversations.replies)
@@ -61,15 +72,12 @@ async function getMessageContext(
       channel,
       ts,
       inclusive: true,
-      limit: 20,
+      limit: 50,
     });
     if (replies.messages && replies.messages.length > 0) {
-      // Collect all messages in the thread for full context
-      const allText = replies.messages
-        .filter((m) => m.text)
-        .map((m) => m.text)
-        .join("\n\n");
-      if (allText.trim()) return allText;
+      const messages = replies.messages.filter((m) => m.text) as ThreadMessage[];
+      const aiText = messages.map((m) => m.text).join("\n\n");
+      if (aiText.trim()) return { aiText, messages };
     }
   } catch {
     // Not a thread, fall through
@@ -84,12 +92,67 @@ async function getMessageContext(
       limit: 1,
     });
     const message = result.messages?.[0];
-    if (message?.text) return message.text;
+    if (message?.text) {
+      return { aiText: message.text, messages: [message as ThreadMessage] };
+    }
   } catch {
     // No access
   }
 
   return null;
+}
+
+function formatSlackTs(ts: string | undefined): string {
+  if (!ts) return "";
+  const seconds = parseFloat(ts);
+  if (!Number.isFinite(seconds)) return "";
+  const d = new Date(seconds * 1000);
+  return d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false });
+}
+
+async function resolveUserDisplayName(
+  userId: string | undefined,
+  cache: Map<string, string>,
+): Promise<string> {
+  if (!userId) return "알 수 없음";
+  const cached = cache.get(userId);
+  if (cached) return cached;
+  try {
+    const slack = getSlackClient();
+    const info = await slack.users.info({ user: userId });
+    const profile = info.user?.profile;
+    const name =
+      profile?.display_name || info.user?.real_name || info.user?.name || userId;
+    cache.set(userId, name);
+    return name;
+  } catch {
+    cache.set(userId, userId);
+    return userId;
+  }
+}
+
+async function formatThreadComment(
+  messages: ThreadMessage[],
+  permalink: string | undefined,
+): Promise<string> {
+  const nameCache = new Map<string, string>();
+  const lines: string[] = [];
+  if (permalink) {
+    lines.push(`슬랙 원본 스레드: ${permalink}`);
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+  lines.push(`**스레드 대화 (${messages.length}개 메시지)**`);
+  lines.push("");
+  for (const m of messages) {
+    const name = await resolveUserDisplayName(m.user, nameCache);
+    const time = formatSlackTs(m.ts);
+    lines.push(`**${name}**${time ? ` — ${time}` : ""}`);
+    lines.push((m.text ?? "").trim());
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 export async function handleReactionAdded(event: {
@@ -107,11 +170,12 @@ export async function handleReactionAdded(event: {
   const client = getSlackClient();
 
   // Get the full message context (including thread if applicable)
-  const messageText = await getMessageContext(event.item.channel, event.item.ts);
-  if (!messageText) {
+  const context = await getMessageContext(event.item.channel, event.item.ts);
+  if (!context) {
     console.log("Could not fetch message text");
     return;
   }
+  const messageText = context.aiText;
 
   console.log("Message text for issue:", messageText.substring(0, 200));
 
@@ -193,18 +257,21 @@ export async function handleReactionAdded(event: {
   });
   const identifier = await created.identifier;
 
-  // Get Slack permalink and add as Linear comment
+  // Add Slack permalink + full thread as Linear comment
   try {
     const permalinkResult = await client.chat.getPermalink({
       channel: event.item.channel,
       message_ts: event.item.ts,
     });
-    if (permalinkResult.permalink) {
-      const { addComment } = await import("@/lib/linear/issues");
-      await addComment(created.id, `슬랙 원본 스레드: ${permalinkResult.permalink}`);
-    }
-  } catch {
-    // permalink 실패해도 이슈 생성은 완료
+    const commentBody = await formatThreadComment(
+      context.messages,
+      permalinkResult.permalink,
+    );
+    const { addComment } = await import("@/lib/linear/issues");
+    await addComment(created.id, commentBody);
+  } catch (err) {
+    console.error("Failed to add thread comment:", err);
+    // 코멘트 실패해도 이슈 생성은 완료
   }
 
   // Reply in thread
