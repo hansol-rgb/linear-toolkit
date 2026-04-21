@@ -299,8 +299,16 @@ export async function handleDMMessage(
           [{ role: "user", content: conversationText }],
         );
 
-        // 포맷: 이슈 링크 + 기타 항목
-        let threadMessage = `*<@${userId}>*`;
+        // 인터뷰 시작 시각 (KST HH:mm)
+        const startTime = new Intl.DateTimeFormat("ko-KR", {
+          timeZone: "Asia/Seoul",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(new Date(conversation.createdAt));
+
+        // 포맷: 시작 시각 + 유저 + 이슈 링크 + 기타 항목
+        let threadMessage = `${startTime} *<@${userId}>*`;
         if (issueDetails.length > 0) {
           threadMessage += `\n${issueDetails.join("\n")}`;
         }
