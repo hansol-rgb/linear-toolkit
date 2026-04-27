@@ -256,6 +256,7 @@ export async function handleReactionAdded(event: {
     assigneeId,
   });
   const identifier = await created.identifier;
+  const issueUrl = await created.url;
 
   // Add Slack permalink + full thread as Linear comment
   try {
@@ -278,6 +279,6 @@ export async function handleReactionAdded(event: {
   await replyInThread(
     event.item.channel,
     event.item.ts,
-    `Linear에 등록했어요: *${identifier}* — ${parsed.title}`,
+    `Linear에 등록했어요: <${issueUrl}|${identifier}> — ${parsed.title}`,
   );
 }
