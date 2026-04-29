@@ -1,3 +1,9 @@
+---
+title: 사용 가이드
+description: linear-toolkit 슬랙 봇 사용법
+lastUpdated: 2026-04-29
+---
+
 # Linear 슬랙봇 사용 가이드
 
 슬랙에서 대화하거나 이모지를 다는 것만으로 Linear에 태스크가 자동으로 만들어지는 봇입니다.

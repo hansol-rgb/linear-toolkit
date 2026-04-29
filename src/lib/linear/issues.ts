@@ -17,6 +17,7 @@ export async function createIssue(params: CreateIssueParams): Promise<Issue> {
       labelIds: params.labelIds,
       assigneeId: params.assigneeId,
       dueDate: params.dueDate,
+      parentId: params.parentId,
     }),
     { label: `createIssue(${params.title})` },
   );
@@ -61,6 +62,26 @@ export async function addComment(
   await withRetry(
     () => client.createComment({ issueId, body }),
     { label: `addComment(${issueId})` },
+  );
+}
+
+/**
+ * Linear의 공식 Slack 통합 어태치먼트 — workspace에 Linear Slack 앱이 설치돼있으면
+ * 스레드 메시지를 Linear 이슈 코멘트로 네이티브 동기화해서 표시.
+ * 우리가 직접 markdown으로 스레드 포맷팅하는 것보다 훨씬 풍부함.
+ */
+export async function attachSlackThread(
+  issueId: string,
+  permalink: string,
+  options?: { title?: string; syncToCommentThread?: boolean }
+): Promise<void> {
+  const client = getLinearClient();
+  await withRetry(
+    () => client.attachmentLinkSlack(issueId, permalink, {
+      syncToCommentThread: options?.syncToCommentThread ?? true,
+      title: options?.title ?? "Slack thread",
+    }),
+    { label: `attachmentLinkSlack(${issueId})` },
   );
 }
 

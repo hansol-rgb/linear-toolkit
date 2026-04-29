@@ -26,6 +26,7 @@ export interface CreateIssueParams {
   labelIds?: string[];
   assigneeId?: string;
   dueDate?: string;          // ISO 8601
+  parentId?: string;         // 부모 이슈 ID (sub-issue로 만들 때)
 }
 
 export interface UpdateIssueParams {

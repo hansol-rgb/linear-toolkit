@@ -50,6 +50,19 @@ Slack → /api/slack/events → after(routeEvent) → Linear API
 - **Label scope rule** (Linear): when attaching labels to an issue, only labels belonging to the issue's team OR workspace-level labels (team=null) are valid. `ensureLabels` enforces this; changing that logic breaks issue creation across teams.
 - **Next.js 16 is not the Next.js from your training data** — see `AGENTS.md`. When in doubt, read `node_modules/next/dist/docs/` instead of guessing APIs.
 - **Test isolation from build**: `tsconfig.json` excludes `**/*.test.ts` so Next.js doesn't try to bundle them. Keep this exclusion if adding more test patterns.
+- **Slack mrkdwn link format**: when posting bot messages, render clickable URLs as `<URL|text>` (not `[text](URL)` markdown). Used for Linear issue links in `src/lib/slack/reactions.ts`.
+
+## Linear admin operations
+
+The Linear MCP server doesn't expose every mutation — notably no `delete_issue_label` or `delete_issue`. For these, write a one-off `tsx` script under `scripts/` that imports `@linear/sdk` directly (see `scripts/delete-labels.ts`, `scripts/delete-issue.ts` for templates).
+
+Run them with:
+
+```bash
+set -a && . ./.env.local && set +a && ./node_modules/.bin/tsx scripts/<name>.ts
+```
+
+`npx tsx` can fail because `npx` may resolve to a project npm script context; the local binary path avoids that. The `set -a` block exports `.env.local` into the environment so `LINEAR_API_KEY` is visible to the script.
 
 ## Testing posture
 

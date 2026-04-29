@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 supabase/.temp/
+
+# 회사 confidential 데이터 (CSV 등) — 작업 참고용 로컬 디렉토리
+context/
+
+# 임시/스크래치 산출물
+public/comparison.*
+public/emoji-task.html
