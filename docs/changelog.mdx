@@ -14,6 +14,11 @@ lastUpdated: 2026-04-29
 
 ## 기능 업데이트
 
+### 2026-04-29
+- changelog 사이드바에 날짜 목록(최신→오래된 순) 표시 및 날짜별 "📤 슬랙에 공유" 버튼 추가 — 해당 날짜 항목만 mrkdwn 포맷으로 `SLACK_CHANGELOG_CHANNEL_ID` 채널에 포스트함 (`cc4b52c`)
+- `/api/changelog/share` API 라우트 신설, Haiku 모델로 SHA·함수명·전문용어를 제거한 PM 친화 톤(*새 기능* / *고쳐진 것*)으로 변환 후 발행함 (`2c7900c`)
+- `docs/user-guide.md` 최신화 — `todo-linear` / `in-progress-linear` / `in-review-linear` / `done-linear` 상태 변경 흐름, Linear 네이티브 슬랙 동기화, 신규 FAQ 등 추가함 (`2c7900c`)
+
 ### 2026-04-27
 - 이모지로 이슈 등록 후 Slack 스레드 답글에 Linear 이슈 링크를 mrkdwn 클릭 가능 형태(`<URL|IDENT>`)로 표시 (`90c72ab`)
 
@@ -80,6 +85,9 @@ lastUpdated: 2026-04-29
 ---
 
 ## 버그 픽스
+
+### 2026-04-29
+- `scripts/post-changelog.ts`에서 `.env.local`을 dotenv로 직접 로드하도록 수정 — 사전에 `set -a && . ./.env.local` 없이 `npm run changelog` / `npm run deploy` 바로 실행 가능해짐 (`37059ab`)
 
 ### Slack 이벤트 처리
 
