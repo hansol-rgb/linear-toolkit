@@ -16,8 +16,12 @@
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
+import { config as loadEnv } from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 import { WebClient } from "@slack/web-api";
+
+// .env.local 자동 로드 — 스크립트가 외부 set -a 없이도 동작
+loadEnv({ path: ".env.local", quiet: true });
 
 const CHANGELOG_PATH = path.join(process.cwd(), "docs/changelog.mdx");
 const STATE_PATH = path.join(process.cwd(), "scripts/.changelog-state.json");
