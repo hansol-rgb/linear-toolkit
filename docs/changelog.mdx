@@ -1,7 +1,7 @@
 ---
 title: 변경 내역
 description: linear-toolkit 슬랙 봇의 기능 업데이트 및 버그 픽스 이력
-lastUpdated: 2026-04-27
+lastUpdated: 2026-04-29
 ---
 
 # 변경 내역
@@ -13,6 +13,18 @@ lastUpdated: 2026-04-27
 ---
 
 ## 기능 업데이트
+
+### 2026-04-27
+- 이모지로 이슈 등록 후 Slack 스레드 답글에 Linear 이슈 링크를 mrkdwn 클릭 가능 형태(`<URL|IDENT>`)로 표시 (`90c72ab`)
+
+### 2026-04-29
+- Supabase 인프라 구축: 5개 테이블·2개 cron 추가, conversation 세션 영속화(cold start 대응), 이슈 생성·상태 변경 audit log 기록 (`b848402`)
+- bot_decisions 30일 히스토리 기반 사용자별 선호 자동 도출 → reactions 폴백에 반영 (`b848402`)
+- Linear 수동 수정 diff 매일 1회 검사 후 `issue_corrections` 적재 (`b848402`)
+- 메시지 본문의 `<@USERID>` 등 Slack 인코딩 멘션을 사람이 읽을 수 있는 형태로 치환 (`b848402`)
+- Linear sub-issue 지원: `parent-issue-linear` 이모지로 부모 등록 시 같은 스레드의 `todo-linear` 등이 자동으로 sub-issue로 연결 (`5773ac3`)
+- Linear 네이티브 Slack 동기화: `attachmentLinkSlack(syncToCommentThread)`로 Slack 스레드를 Linear 이슈에 rich attachment로 첨부, 실패 시 markdown 폴백 (`5773ac3`)
+- Docs 사이트(`/guide`, `/changelog`, `/system`) 추가 및 `npm run deploy` / `npm run changelog` 자동화 스크립트 구축 (`5773ac3`)
 
 ### 2026-04-10 — 프로젝트 시작
 
