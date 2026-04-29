@@ -56,7 +56,7 @@ export async function GET(req: Request) {
         expiresAt: now + config.app.conversationTimeoutMs,
       };
 
-      setConversation(userId, state);
+      await setConversation(userId, state);
       results.push({ userId, success: true });
     } catch (error) {
       results.push({

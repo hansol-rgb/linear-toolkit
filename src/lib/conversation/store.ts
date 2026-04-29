@@ -1,13 +1,9 @@
-import { ConversationState } from './types';
-
-// In-memory store for development. Replace with Vercel KV (Upstash Redis) for production.
-const conversations = new Map<string, ConversationState>();
-
-// Daily scrum thread — find today's daily message from the channel
+import { ConversationState, ConversationMessage, ConversationStatus } from './types';
+import { getSupabaseClient } from '@/lib/supabase/client';
 import { getSlackClient } from '@/lib/slack/client';
 import { config } from '@/lib/config';
 
-// In-memory cache (same instance only)
+// 데일리 스크럼 스레드 ts — 인스턴스별 캐시. 콜드 스타트 시 슬랙 API로 재조회/재생성하므로 영속화 불필요.
 let dailyThreadTsCache: string | null = null;
 let dailyThreadDateCache: string | null = null;
 
@@ -19,12 +15,10 @@ export function setDailyThread(ts: string): void {
 export async function getDailyThread(): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
 
-  // 1. 캐시에 있으면 바로 반환
   if (dailyThreadDateCache === today && dailyThreadTsCache) {
     return dailyThreadTsCache;
   }
 
-  // 2. 캐시에 없으면 슬랙 채널에서 오늘의 데일리 메시지 검색
   try {
     const client = getSlackClient();
     const todayStart = new Date();
@@ -36,7 +30,6 @@ export async function getDailyThread(): Promise<string | null> {
       limit: 10,
     });
 
-    // 봇이 오늘 올린 "데일리 스크럼" 메시지 찾기
     const dailyMsg = result.messages?.find(
       (m) => m.bot_id && m.text?.includes('데일리 스크럼')
     );
@@ -50,16 +43,14 @@ export async function getDailyThread(): Promise<string | null> {
     // 채널 접근 실패 시 아래로 진행
   }
 
-  // 3. 오늘 데일리 메시지가 없으면 직접 생성
   try {
-    const { postToChannel } = await import('@/lib/slack/channel');
+    const client = getSlackClient();
     const todayStr = new Date().toLocaleDateString('ko-KR', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
       weekday: 'long',
     });
-    const client = getSlackClient();
     const result = await client.chat.postMessage({
       channel: config.slack.scrumChannelId,
       text: `*${todayStr} 데일리 스크럼*\n팀원들의 오늘 할 일이 여기에 실시간으로 업데이트됩니다.`,
@@ -76,51 +67,111 @@ export async function getDailyThread(): Promise<string | null> {
   return null;
 }
 
-export function getConversation(userId: string): ConversationState | null {
-  const state = conversations.get(userId);
-  if (!state) return null;
+interface ConversationRow {
+  user_id: string;
+  slack_channel_id: string;
+  status: string;
+  messages: ConversationMessage[];
+  follow_up_count: number;
+  created_at: string;
+  expires_at: string;
+}
 
-  if (Date.now() > state.expiresAt) {
-    conversations.delete(userId);
+function rowToState(row: ConversationRow): ConversationState {
+  return {
+    userId: row.user_id,
+    slackChannelId: row.slack_channel_id,
+    status: row.status as ConversationStatus,
+    messages: row.messages,
+    followUpCount: row.follow_up_count,
+    createdAt: Date.parse(row.created_at),
+    expiresAt: Date.parse(row.expires_at),
+  };
+}
+
+export async function getConversation(userId: string): Promise<ConversationState | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    console.error('getConversation failed:', error);
     return null;
   }
-
+  if (!data) return null;
+  const state = rowToState(data as ConversationRow);
+  if (Date.now() > state.expiresAt) {
+    await deleteConversation(userId);
+    return null;
+  }
   return state;
 }
 
-export function setConversation(userId: string, state: ConversationState): void {
-  conversations.set(userId, state);
-}
-
-export function deleteConversation(userId: string): void {
-  conversations.delete(userId);
-}
-
-export function getAllActiveConversations(): ConversationState[] {
-  const now = Date.now();
-  const active: ConversationState[] = [];
-
-  for (const [userId, state] of conversations) {
-    if (now > state.expiresAt) {
-      conversations.delete(userId);
-      continue;
-    }
-    active.push(state);
-  }
-
-  return active;
-}
-
-export function getCompletedConversations(): ConversationState[] {
-  return Array.from(conversations.values()).filter(
-    (s) => s.status === 'completed'
+export async function setConversation(userId: string, state: ConversationState): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('conversations').upsert(
+    {
+      user_id: userId,
+      slack_channel_id: state.slackChannelId,
+      status: state.status,
+      messages: state.messages,
+      follow_up_count: state.followUpCount,
+      created_at: new Date(state.createdAt).toISOString(),
+      expires_at: new Date(state.expiresAt).toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id' },
   );
+  if (error) {
+    console.error('setConversation failed:', error);
+  }
 }
 
-export function clearCompletedConversations(): void {
-  for (const [userId, state] of conversations) {
-    if (state.status === 'completed') {
-      conversations.delete(userId);
-    }
+export async function deleteConversation(userId: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('conversations').delete().eq('user_id', userId);
+  if (error) {
+    console.error('deleteConversation failed:', error);
+  }
+}
+
+export async function getAllActiveConversations(): Promise<ConversationState[]> {
+  const supabase = getSupabaseClient();
+  const nowIso = new Date().toISOString();
+  // 만료된 행은 별도 cleanup 호출 없이 select에서 제외 (lazy cleanup은 clearExpiredConversations에서 일괄)
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .gt('expires_at', nowIso);
+  if (error) {
+    console.error('getAllActiveConversations failed:', error);
+    return [];
+  }
+  return (data as ConversationRow[]).map(rowToState);
+}
+
+export async function getCompletedConversations(): Promise<ConversationState[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('status', 'completed');
+  if (error) {
+    console.error('getCompletedConversations failed:', error);
+    return [];
+  }
+  return (data as ConversationRow[]).map(rowToState);
+}
+
+export async function clearCompletedConversations(): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('conversations')
+    .delete()
+    .eq('status', 'completed');
+  if (error) {
+    console.error('clearCompletedConversations failed:', error);
   }
 }

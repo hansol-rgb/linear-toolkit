@@ -18,8 +18,9 @@ import { generateInterviewResponse, shouldEndConversation } from "@/lib/ai/inter
 import { classifyIntent } from "@/lib/ai/intent";
 import { executeCommand } from "@/lib/slack/commands";
 import { extractIssues } from "@/lib/ai/extract-issues";
+import { recordDecision } from "@/lib/supabase/audit";
 import { createIssue, addComment, getIssueByIdentifier } from "@/lib/linear/issues";
-import { chat as chatFn } from "@/lib/ai/client";
+import { chat as chatFn, AI_MODEL_SMART } from "@/lib/ai/client";
 import { handleReactionAdded } from "./reactions";
 import { getTeams } from "@/lib/linear/teams";
 import { ensureLabels } from "@/lib/linear/labels";
@@ -168,6 +169,17 @@ async function processConversationEnd(conversation: ConversationState): Promise<
               url: existing.url,
               title: existing.title,
             });
+            await recordDecision({
+              decisionType: "interview_issue",
+              slackUserId: conversation.userId,
+              slackChannelId: conversation.slackChannelId,
+              inputText: conversationText,
+              aiModel: AI_MODEL_SMART,
+              aiRawOutput: issue,
+              finalDecision: { action: "update_existing", existingIdentifier: existing.identifier, teamKey: team.key },
+              linearIssueIdentifier: existing.identifier,
+              linearIssueId: existing.id,
+            });
             continue;
           }
         }
@@ -177,6 +189,28 @@ async function processConversationEnd(conversation: ConversationState): Promise<
           identifier: created.identifier,
           url: created.url,
           title: created.title,
+        });
+        await recordDecision({
+          decisionType: "interview_issue",
+          slackUserId: conversation.userId,
+          slackChannelId: conversation.slackChannelId,
+          inputText: conversationText,
+          aiModel: AI_MODEL_SMART,
+          aiRawOutput: issue,
+          finalDecision: {
+            action: "create",
+            title: pendingIssue.title,
+            teamId: team.id,
+            teamKey: team.key,
+            projectId: pendingIssue.projectId,
+            projectName: issue.projectName,
+            priority: pendingIssue.priority,
+            estimate: pendingIssue.estimate,
+            labelIds: pendingIssue.labelIds,
+            assigneeId: pendingIssue.assigneeId,
+          },
+          linearIssueIdentifier: created.identifier,
+          linearIssueId: created.id,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "알 수 없는 오류";
@@ -223,7 +257,7 @@ export async function handleDMMessage(
     }
 
     // 진행 중인 대화가 없으면 먼저 의도 분류
-    const existingConversation = getConversation(userId);
+    const existingConversation = await getConversation(userId);
 
     if (!existingConversation) {
       const intent = await classifyIntent(text);
@@ -259,7 +293,7 @@ export async function handleDMMessage(
     // (이전엔 2였는데 AI가 마무리 인사를 보낸 다음 턴에야 종료되는 버그 있었음)
     if (shouldEnd || conversation.followUpCount >= 1) {
       conversation.status = "completed";
-      setConversation(userId, conversation);
+      await setConversation(userId, conversation);
 
       // Extract issues and create in Linear
       const { issues, errors, notices } = await processConversationEnd(conversation);
@@ -323,7 +357,7 @@ export async function handleDMMessage(
         );
       }
 
-      deleteConversation(userId);
+      await deleteConversation(userId);
       return;
     }
 
@@ -337,7 +371,7 @@ export async function handleDMMessage(
     );
 
     conversation.messages.push({ role: "assistant", content: aiResponse, timestamp: Date.now() });
-    setConversation(userId, conversation);
+    await setConversation(userId, conversation);
 
     await sendDM(userId, aiResponse);
   } catch (error) {

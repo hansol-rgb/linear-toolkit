@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/summary",
       "schedule": "0 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/check-corrections",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-preferences",
+      "schedule": "30 12 * * *"
     }
   ]
 }
